@@ -1,4 +1,11 @@
-## Hi there 👋
+![Github Stats](https://github-readme-stats.vercel.app/api?username=ParkSnoopy&show_icons=true&show=prs_merged,prs_merged_percentage&theme=dark)
+
+## Programming for fun
+- Privacy
+- Freedom
+- Self-Hosted
+- Obfuscation
+- CLI Environment
 
 <!--
 **ParkSnoopy/ParkSnoopy** is a ✨ _special_ ✨ repository because its `README.md` (this file) appears on your GitHub profile.
