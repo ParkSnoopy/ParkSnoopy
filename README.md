@@ -1,6 +1,9 @@
 ![Github Stats](https://github-readme-stats.vercel.app/api?username=ParkSnoopy&show_icons=true&show=prs_merged,prs_merged_percentage&theme=dark)
 
-## Programming for fun
+<br>  
+<br>  
+
+---
 - Privacy
 - Freedom
 - Self-Hosted
