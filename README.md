@@ -1,15 +1,10 @@
 ![Github Stats](https://github-readme-stats.vercel.app/api?username=ParkSnoopy&theme=dark&show_icons=true&show=prs_merged)
 ![Top Languages](https://github-readme-stats.vercel.app/api/top-langs/?username=ParkSnoopy&theme=dark&exclude_repo=rust_llvm-arkari_ollvm&layout=donut)
-
-<br>  
-<br>  
-
+  
 ---
 - Privacy
 - Freedom
-- Self-Hosted
 - Obfuscation
-- CLI Environment
 
 <!--
 **ParkSnoopy/ParkSnoopy** is a ✨ _special_ ✨ repository because its `README.md` (this file) appears on your GitHub profile.
