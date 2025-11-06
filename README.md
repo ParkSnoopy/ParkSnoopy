@@ -1,4 +1,4 @@
-![Github Stats](https://github-readme-stats.vercel.app/api?username=ParkSnoopy&theme=dark&show_icons=true&show=prs_merged,prs_merged_percentage)
+![Github Stats](https://github-readme-stats.vercel.app/api?username=ParkSnoopy&theme=dark&show_icons=true&show=prs_merged)
 ![Top Languages](https://github-readme-stats.vercel.app/api/top-langs/?username=ParkSnoopy&theme=dark&exclude_repo=rust_llvm-arkari_ollvm&layout=donut)
 
 <br>  
