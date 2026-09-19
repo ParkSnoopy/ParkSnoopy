@@ -15,7 +15,7 @@ runs:
         pattern: ${{ inputs.repository }}-release-*
         path: release-assets
         merge-multiple: true
-        github-token: ${{ inputs.token }}
+        github-token: ${{ env.GH_TOKEN }}
     - name: Replace matching releases
       shell: bash
       env:

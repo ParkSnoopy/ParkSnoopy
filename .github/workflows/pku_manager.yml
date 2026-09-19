@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+  GH_TOKEN: ${{ secrets.CLONE_TOKEN }}
 
 jobs:
   prepare:
@@ -113,4 +113,4 @@ jobs:
       - uses: ./.github/actions/publish-release
         with:
           repository: pku_manager
-          token: ${{ env.GH_TOKEN }}
+          token: ${{ secrets.RELEASE_TOKEN }}

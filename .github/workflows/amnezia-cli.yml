@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+  GH_TOKEN: ${{ secrets.CLONE_TOKEN }}
 
 jobs:
   build:
@@ -23,7 +23,7 @@ jobs:
       GOARCH: amd64
       CGO_ENABLED: '0'
     steps:
-      - name: Check release access
+      - name: Check repository access
         run: |
           set -euo pipefail
           test -n "$GH_TOKEN"
@@ -70,4 +70,4 @@ jobs:
       - uses: ./.github/actions/publish-release
         with:
           repository: amnezia-cli
-          token: ${{ env.GH_TOKEN }}
+          token: ${{ secrets.RELEASE_TOKEN }}
