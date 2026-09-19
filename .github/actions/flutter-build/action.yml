@@ -1,0 +1,133 @@
+name: Build Flutter platform
+description: Build and archive an already prepared native Flutter source tree.
+inputs:
+  repository:
+    description: Source repository name.
+    required: true
+  platform:
+    description: Android, Linux, macOS, Windows, iOS, or iOS simulator target.
+    required: true
+  revision:
+    description: Exact source commit.
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.repository }}-data
+        path: source
+        github-token: ${{ env.GH_TOKEN }}
+    - name: Restore build assets
+      working-directory: source
+      shell: bash
+      run: unzip -q -o data.zip
+    - uses: actions/setup-java@v4
+      if: inputs.platform == 'android'
+      with:
+        distribution: temurin
+        java-version: '17'
+    - name: Restore Android signing key
+      if: inputs.platform == 'android'
+      working-directory: source
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -n "$ANDROID_KEYSTORE_BASE64"
+        test -n "$ANDROID_KEYSTORE_PASSWORD"
+        test -n "$ANDROID_KEY_ALIAS"
+        test -n "$ANDROID_KEY_PASSWORD"
+        printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+        keytool -list -keystore "$RUNNER_TEMP/release.jks" \
+          -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" >/dev/null
+        echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+    - name: Install Linux dependencies
+      if: inputs.platform == 'linux'
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update \
+          -o Dir::Etc::sourcelist='sources.list.d/ubuntu.sources' \
+          -o Dir::Etc::sourceparts='-'
+        sudo apt-get install -y clang cmake ninja-build pkg-config \
+          libgtk-3-dev liblzma-dev libsqlite3-dev libayatana-appindicator3-dev
+    - uses: subosito/flutter-action@v2
+      with:
+        channel: stable
+        cache: true
+    - name: Build and package
+      working-directory: source
+      shell: bash
+      env:
+        PROGRAM: ${{ inputs.repository }}
+        PLATFORM: ${{ inputs.platform }}
+        SOURCE_SHA: ${{ inputs.revision }}
+      run: |
+        set -euo pipefail
+        flutter pub get
+        version="$(sed -n 's/^version: *\([^+ ]*\).*/\1/p' pubspec.yaml)"
+        [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+        IFS=. read -r major minor patch <<< "$version"
+        (( 10#$minor < 1000 && 10#$patch < 1000 ))
+        number=$((10#$major * 1000000 + 10#$minor * 1000 + 10#$patch))
+        (( number >= 1 && number <= 2100000000 ))
+        args=(--build-name "$version" --build-number "$number" "--dart-define=BUILD_COMMIT=$SOURCE_SHA")
+        mkdir -p ../dist
+        case "$PLATFORM" in
+          android)
+            flutter build apk --release "${args[@]}"
+            cp build/app/outputs/flutter-apk/app-release.apk "../dist/$PROGRAM-android.apk"
+            ;;
+          linux)
+            flutter build linux --release "${args[@]}"
+            if [[ "$PROGRAM" == pku_manager ]]; then
+              curl -fsSL -o "$RUNNER_TEMP/appimagetool" \
+                https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+              echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  $RUNNER_TEMP/appimagetool" | sha256sum --check
+              chmod +x "$RUNNER_TEMP/appimagetool"
+              curl -fsSL -o "$RUNNER_TEMP/runtime-x86_64" \
+                https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
+              echo "1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf  $RUNNER_TEMP/runtime-x86_64" | sha256sum --check
+              cmake -S packaging/linux -B build/appimage -G Ninja \
+                -DAPPIMAGETOOL="$RUNNER_TEMP/appimagetool" -DRUNTIME="$RUNNER_TEMP/runtime-x86_64"
+              cmake --build build/appimage --target appimage
+              cp build/appimage/pku-manager.AppImage "../dist/$PROGRAM-linux.AppImage"
+            else
+              tar -C build/linux/x64/release/bundle -czf "../dist/$PROGRAM-linux.tar.gz" .
+            fi
+            ;;
+          macos)
+            flutter build macos --release "${args[@]}"
+            ditto -c -k --sequesterRsrc --keepParent \
+              "build/macos/Build/Products/Release/$PROGRAM.app" "../dist/$PROGRAM-macos.zip"
+            ;;
+          windows)
+            flutter build windows --release "${args[@]}"
+            if [[ "$PROGRAM" == pku_manager ]]; then
+              choco install nsis --version=3.11 -y --no-progress
+              MSYS_NO_PATHCONV=1 '/c/Program Files (x86)/NSIS/makensis.exe' "/DVERSION=$version" packaging/windows/installer.nsi
+              cp packaging/windows/pku-manager-setup.exe "../dist/$PROGRAM-windows.exe"
+            else
+              7z a "../dist/$PROGRAM-windows.zip" ./build/windows/x64/runner/Release/*
+            fi
+            ;;
+          ios)
+            flutter build ios --release --no-codesign "${args[@]}"
+            ditto -c -k --keepParent build/ios/iphoneos/Runner.app "../dist/$PROGRAM-ios-unsigned.zip"
+            ;;
+          ios-simulator)
+            flutter build ios --simulator "${args[@]}"
+            ditto -c -k --keepParent build/ios/iphonesimulator/Runner.app "../dist/$PROGRAM-ios-simulator.zip"
+            ;;
+          *) echo "Unsupported platform: $PLATFORM" >&2; exit 1 ;;
+        esac
+    - name: Remove Android signing key
+      if: always() && inputs.platform == 'android'
+      shell: bash
+      run: rm -f "$RUNNER_TEMP/release.jks"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.repository }}-release-${{ inputs.platform }}
+        path: dist/*
+        if-no-files-found: error
+        retention-days: 1

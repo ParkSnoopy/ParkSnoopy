@@ -1,0 +1,42 @@
+name: Replace published release
+description: Replace only this program's release after every build succeeds.
+inputs:
+  repository:
+    description: Source repository name and release title.
+    required: true
+  token:
+    description: Token with Contents and Workflows write access.
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@v4
+      with:
+        pattern: ${{ inputs.repository }}-release-*
+        path: release-assets
+        merge-multiple: true
+        github-token: ${{ inputs.token }}
+    - name: Replace matching releases
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        RELEASE_NAME: ${{ inputs.repository }}
+      run: |
+        set -euo pipefail
+        shopt -s nullglob
+        assets=(release-assets/*)
+        (( ${#assets[@]} > 0 ))
+        releases="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
+        ids="$(jq -r --arg name "$RELEASE_NAME" '.[] | select(.name == $name) | .id' <<< "$releases")"
+        for id in $ids; do
+          gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+        done
+        # Unique tags avoid reusing the previous release's source commit.
+        tag="$RELEASE_NAME-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+        gh release create "$tag" "${assets[@]}" \
+          --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+          --title "$RELEASE_NAME" --notes '' --draft=false --latest=false
+        gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
+          --json name,isDraft,body,assets | \
+          jq -e --arg name "$RELEASE_NAME" --argjson count "${#assets[@]}" \
+            '.name == $name and (.isDraft == false) and ((.body // "") == "") and (.assets | length == $count)'

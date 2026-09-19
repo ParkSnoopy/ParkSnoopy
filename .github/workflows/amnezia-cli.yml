@@ -1,0 +1,72 @@
+name: amnezia-cli
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: amnezia-cli
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+
+jobs:
+  build:
+    # The application and its routing implementation support Linux only.
+    runs-on: ubuntu-24.04
+    env:
+      GOOS: linux
+      GOARCH: amd64
+      CGO_ENABLED: '0'
+    steps:
+      - name: Check release access
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN"
+          gh api "repos/$GITHUB_REPOSITORY" >/dev/null
+      - uses: actions/checkout@v4
+        with:
+          repository: ParkSnoopy/amnezia-cli
+          token: ${{ env.GH_TOKEN }}
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build and package complete bundle
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -G Ninja
+          cmake --build build
+          build/dist/amn version
+          for binary in amn libexec/amn/xray libexec/amn/wireguard-go libexec/amn/amneziawg-go; do
+            test -x "build/dist/$binary"
+          done
+          mkdir -p package/amnezia-cli dist
+          cp -a build/dist/. package/amnezia-cli/
+          tar -C package -czf dist/amnezia-cli-linux.tar.gz amnezia-cli
+      - uses: actions/upload-artifact@v4
+        with:
+          name: amnezia-cli-release-linux
+          path: dist/amnezia-cli-linux.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ env.GH_TOKEN }}
+          persist-credentials: false
+      - uses: ./.github/actions/publish-release
+        with:
+          repository: amnezia-cli
+          token: ${{ env.GH_TOKEN }}
