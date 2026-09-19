@@ -16,3 +16,6 @@ jobs:
   amnezia-cli:
     uses: ./.github/workflows/amnezia-cli.yml
     secrets: inherit
+  snoopage_client:
+    uses: ./.github/workflows/snoopage_client.yml
+    secrets: inherit

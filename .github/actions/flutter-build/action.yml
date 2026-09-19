@@ -50,7 +50,8 @@ runs:
           -o Dir::Etc::sourcelist='sources.list.d/ubuntu.sources' \
           -o Dir::Etc::sourceparts='-'
         sudo apt-get install -y clang cmake ninja-build pkg-config \
-          libgtk-3-dev liblzma-dev libsqlite3-dev libayatana-appindicator3-dev
+          libgtk-3-dev liblzma-dev libsqlite3-dev libayatana-appindicator3-dev \
+          libsecret-1-dev libjsoncpp-dev
     - uses: subosito/flutter-action@v2
       with:
         channel: stable
@@ -76,7 +77,17 @@ runs:
         case "$PLATFORM" in
           android)
             flutter build apk --release "${args[@]}"
-            cp build/app/outputs/flutter-apk/app-release.apk "../dist/$PROGRAM-android.apk"
+            for apksigner in "$ANDROID_HOME"/build-tools/*/apksigner; do
+              [[ -x "$apksigner" ]] && break
+            done
+            test -x "$apksigner"
+            # Enforce the CI key even when upstream Gradle uses debug signing.
+            "$apksigner" sign --ks "$ANDROID_KEYSTORE_PATH" \
+              --ks-key-alias "$ANDROID_KEY_ALIAS" \
+              --ks-pass env:ANDROID_KEYSTORE_PASSWORD --key-pass env:ANDROID_KEY_PASSWORD \
+              --v4-signing-enabled false --out "../dist/$PROGRAM-android.apk" \
+              build/app/outputs/flutter-apk/app-release.apk
+            "$apksigner" verify --verbose --print-certs "../dist/$PROGRAM-android.apk"
             ;;
           linux)
             flutter build linux --release "${args[@]}"

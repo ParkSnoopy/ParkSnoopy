@@ -1,0 +1,112 @@
+name: snoopage_client
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: snoopage_client
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    environment: snoopage_client
+    outputs:
+      revision: ${{ steps.source.outputs.revision }}
+    steps:
+      - name: Check access and signing secrets
+        env:
+          KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN"
+          test -n "$KEY"
+          test -n "$STORE_PASSWORD"
+          test -n "$KEY_PASSWORD"
+          test -n "$KEY_ALIAS"
+          gh api "repos/$GITHUB_REPOSITORY" >/dev/null
+      - uses: actions/checkout@v4
+        with:
+          repository: ParkSnoopy/snoopage_client
+          token: ${{ env.GH_TOKEN }}
+          lfs: false
+          persist-credentials: false
+      - id: source
+        run: echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Package fonts
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/sans.zip" \
+            https://github.com/notofonts/noto-cjk/releases/download/Sans2.004/00_NotoSansCJK.ttc.zip
+          unzip -p "$RUNNER_TEMP/sans.zip" NotoSansCJK.ttc > assets/fonts/NotoSansCJK.ttc
+          test -s assets/fonts/NotoSansCJK.ttc
+          zip -q data.zip assets/fonts/NotoSansCJK.ttc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snoopage_client-data
+          path: data.zip
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    needs: prepare
+    environment: snoopage_client
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {platform: android, os: ubuntu-24.04}
+          - {platform: linux, os: ubuntu-24.04}
+          - {platform: windows, os: windows-2022}
+          - {platform: macos, os: macos-15}
+          - {platform: ios, os: macos-15}
+          - {platform: ios-simulator, os: macos-15}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ env.GH_TOKEN }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: ParkSnoopy/snoopage_client
+          ref: ${{ needs.prepare.outputs.revision }}
+          path: source
+          token: ${{ env.GH_TOKEN }}
+          lfs: false
+          persist-credentials: false
+      - uses: ./.github/actions/flutter-build
+        with:
+          repository: snoopage_client
+          platform: ${{ matrix.platform }}
+          revision: ${{ needs.prepare.outputs.revision }}
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ matrix.platform == 'android' && secrets.ANDROID_KEYSTORE_BASE64 || '' }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ matrix.platform == 'android' && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
+          ANDROID_KEY_ALIAS: ${{ matrix.platform == 'android' && secrets.ANDROID_KEY_ALIAS || '' }}
+          ANDROID_KEY_PASSWORD: ${{ matrix.platform == 'android' && secrets.ANDROID_KEY_PASSWORD || '' }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ env.GH_TOKEN }}
+          persist-credentials: false
+      - uses: ./.github/actions/publish-release
+        with:
+          repository: snoopage_client
+          token: ${{ env.GH_TOKEN }}
