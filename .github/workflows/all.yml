@@ -19,3 +19,6 @@ jobs:
   snoopage_client:
     uses: ./.github/workflows/snoopage_client.yml
     secrets: inherit
+  snoo-box:
+    uses: ./.github/workflows/snoo-box.yml
+    secrets: inherit
