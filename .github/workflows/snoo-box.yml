@@ -69,6 +69,8 @@ jobs:
           java-version: '21'
       - uses: android-actions/setup-android@v3
         if: matrix.platform == 'android'
+        with:
+          packages: ''
       - name: Install Android SDK and signing key
         if: matrix.platform == 'android'
         env:
@@ -99,7 +101,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          go install github.com/wailsapp/wails/v3/cmd/wails3
+          tools_dir="$(mktemp -d)"
+          cp go.mod go.sum "$tools_dir/"
+          GOBIN="$(go env GOPATH)/bin" go -C "$tools_dir" install -mod=mod github.com/wailsapp/wails/v3/cmd/wails3
+          rm -r "$tools_dir"
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Package application
         working-directory: source/app
