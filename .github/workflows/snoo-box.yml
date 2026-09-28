@@ -83,9 +83,6 @@ jobs:
           set -euo pipefail
           sudo apt-get update -o Dir::Etc::sourcelist='sources.list.d/ubuntu.sources' -o Dir::Etc::sourceparts='-'
           sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
-          if [[ "$PLATFORM" == linux ]]; then sudo apt-get install -y libfuse2t64; fi
-        env:
-          PLATFORM: ${{ matrix.platform }}
       - uses: actions/setup-java@v4
         if: matrix.platform == 'android'
         with:
@@ -159,8 +156,10 @@ jobs:
           case "$PLATFORM" in
             linux)
               shopt -s nullglob
-              packages=(bin/*.AppImage bin/*.deb bin/*.rpm bin/*.pkg.tar.* bin/snoo-box-cli-linux-amd64.zip)
+              packages=(bin/snoo-box-linux-amd64.tar.gz bin/*.deb bin/*.rpm bin/*.pkg.tar.* bin/snoo-box-cli-linux-amd64.zip)
               (( ${#packages[@]} == 5 ))
+              test -s bin/snoo-box-linux-amd64.tar.gz
+              tar -tzf bin/snoo-box-linux-amd64.tar.gz | grep -x 'snoo-box-linux-amd64/snoo-box' > /dev/null
               test -s bin/snoo-box-cli-linux-amd64.zip
               cp "${packages[@]}" dist/
               ;;
