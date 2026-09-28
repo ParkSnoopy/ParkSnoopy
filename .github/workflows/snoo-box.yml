@@ -51,17 +51,32 @@ jobs:
           submodules: recursive
           token: ${{ env.GH_TOKEN }}
           persist-credentials: false
+      - name: Restore engine release tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          for engine in xray-core hysteria amneziawg-go; do
+            directory="source/protocols/$engine"
+            if [[ "$(git -C "$directory" rev-parse --is-shallow-repository)" == true ]]; then
+              git -C "$directory" fetch --unshallow --tags
+            else
+              git -C "$directory" fetch --tags
+            fi
+          done
       - uses: actions/setup-go@v5
         with:
           go-version-file: source/app/go.mod
           cache: false
       - uses: oven-sh/setup-bun@v2
       - name: Install Linux dependencies
-        if: matrix.platform == 'linux'
+        if: matrix.platform == 'linux' || matrix.platform == 'android'
         run: |
           set -euo pipefail
           sudo apt-get update -o Dir::Etc::sourcelist='sources.list.d/ubuntu.sources' -o Dir::Etc::sourceparts='-'
-          sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev libfuse2t64
+          sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
+          if [[ "$PLATFORM" == linux ]]; then sudo apt-get install -y libfuse2t64; fi
+        env:
+          PLATFORM: ${{ matrix.platform }}
       - uses: actions/setup-java@v4
         if: matrix.platform == 'android'
         with:
