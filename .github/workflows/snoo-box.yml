@@ -129,7 +129,10 @@ jobs:
         run: |
           set -euo pipefail
           case "$PLATFORM" in
-            linux) wails3 task package ;;
+            linux)
+              wails3 task package
+              wails3 task cli:package
+              ;;
             android) wails3 task android:package ARCH=arm64 ;;
             windows) wails3 task windows:package ARCH=amd64 ;;
             macos) wails3 task darwin:package ARCH=arm64 ;;
@@ -147,8 +150,9 @@ jobs:
           case "$PLATFORM" in
             linux)
               shopt -s nullglob
-              packages=(bin/*.AppImage bin/*.deb bin/*.rpm bin/*.pkg.tar.*)
-              (( ${#packages[@]} == 4 ))
+              packages=(bin/*.AppImage bin/*.deb bin/*.rpm bin/*.pkg.tar.* bin/snoo-box-cli-linux-amd64.zip)
+              (( ${#packages[@]} == 5 ))
+              test -s bin/snoo-box-cli-linux-amd64.zip
               cp "${packages[@]}" dist/
               ;;
             android)
