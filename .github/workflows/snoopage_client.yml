@@ -20,6 +20,7 @@ jobs:
     environment: snoopage_client
     outputs:
       revision: ${{ steps.source.outputs.revision }}
+      version: ${{ steps.source.outputs.version }}
     steps:
       - name: Check access and signing secrets
         env:
@@ -42,7 +43,12 @@ jobs:
           lfs: false
           persist-credentials: false
       - id: source
-        run: echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version: *\([^+ ]*\).*/\1/p' pubspec.yaml)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Package fonts
         run: |
           set -euo pipefail
@@ -97,7 +103,7 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ matrix.platform == 'android' && secrets.ANDROID_KEY_PASSWORD || '' }}
 
   release:
-    needs: build
+    needs: [prepare, build]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -109,4 +115,6 @@ jobs:
       - uses: ./.github/actions/publish-release
         with:
           repository: snoopage_client
+          title: Snoopage Client
+          version: ${{ needs.prepare.outputs.version }}
           token: ${{ secrets.RELEASE_TOKEN }}

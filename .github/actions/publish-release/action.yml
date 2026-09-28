@@ -2,7 +2,13 @@ name: Replace published release
 description: Replace only this program's release after every build succeeds.
 inputs:
   repository:
-    description: Source repository name and release title.
+    description: Source repository name and artifact prefix.
+    required: true
+  title:
+    description: Human-readable repository title.
+    required: true
+  version:
+    description: Three-component application version without a leading v.
     required: true
   token:
     description: Token with Contents and Workflows write access.
@@ -20,23 +26,29 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
-        RELEASE_NAME: ${{ inputs.repository }}
+        RELEASE_REPOSITORY: ${{ inputs.repository }}
+        RELEASE_TITLE: ${{ inputs.title }}
+        RELEASE_VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
+        [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+        title="$RELEASE_TITLE v$RELEASE_VERSION"
         shopt -s nullglob
         assets=(release-assets/*)
         (( ${#assets[@]} > 0 ))
         releases="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
-        ids="$(jq -r --arg name "$RELEASE_NAME" '.[] | select(.name == $name) | .id' <<< "$releases")"
+        ids="$(jq -r --arg legacy "$RELEASE_REPOSITORY" --arg prefix "$RELEASE_TITLE v" \
+          '.[] | (.name // "") as $name | select($name == $legacy or ($name | startswith($prefix) and (ltrimstr($prefix) | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")))) | .id' \
+          <<< "$releases")"
         for id in $ids; do
           gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
         done
         # Unique tags avoid reusing the previous release's source commit.
-        tag="$RELEASE_NAME-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+        tag="$RELEASE_REPOSITORY-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
         gh release create "$tag" "${assets[@]}" \
           --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-          --title "$RELEASE_NAME" --notes '' --draft=false --latest=false
+          --title "$title" --notes '' --draft=false --latest=false
         gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
           --json name,isDraft,body,assets | \
-          jq -e --arg name "$RELEASE_NAME" --argjson count "${#assets[@]}" \
+          jq -e --arg name "$title" --argjson count "${#assets[@]}" \
             '.name == $name and (.isDraft == false) and ((.body // "") == "") and (.assets | length == $count)'

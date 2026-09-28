@@ -18,6 +18,8 @@ jobs:
   build:
     # The application and its routing implementation support Linux only.
     runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.package.outputs.version }}
     env:
       GOOS: linux
       GOARCH: amd64
@@ -39,11 +41,15 @@ jobs:
           go-version-file: go.mod
           cache: false
       - name: Build and package complete bundle
+        id: package
         run: |
           set -euo pipefail
           cmake -S . -B build -G Ninja
           cmake --build build
-          build/dist/amn version
+          version="$(build/dist/amn version)"
+          version="${version##* }"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "version=$version" >> "$GITHUB_OUTPUT"
           for binary in amn libexec/amn/xray libexec/amn/wireguard-go libexec/amn/amneziawg-go; do
             test -x "build/dist/$binary"
           done
@@ -70,4 +76,6 @@ jobs:
       - uses: ./.github/actions/publish-release
         with:
           repository: amnezia-cli
+          title: Amnezia CLI
+          version: ${{ needs.build.outputs.version }}
           token: ${{ secrets.RELEASE_TOKEN }}

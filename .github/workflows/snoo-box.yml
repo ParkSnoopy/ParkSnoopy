@@ -19,15 +19,24 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       revision: ${{ steps.source.outputs.revision }}
+      version: ${{ steps.source.outputs.version }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ParkSnoopy/snoo-box
+          path: source
+          token: ${{ env.GH_TOKEN }}
+          persist-credentials: false
       - name: Resolve source revision
         id: source
         run: |
           set -euo pipefail
-          test -n "$GH_TOKEN"
-          revision="$(gh api repos/ParkSnoopy/snoo-box/commits/main --jq .sha)"
+          revision="$(git -C source rev-parse HEAD)"
           [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
+          version="$(sed -n 's/^const AppVersion = "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"$/\1/p' source/app/src/internal/core/buildinfo/version.go)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
   build:
     needs: prepare
@@ -182,7 +191,7 @@ jobs:
           retention-days: 1
 
   release:
-    needs: build
+    needs: [prepare, build]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -194,4 +203,6 @@ jobs:
       - uses: ./.github/actions/publish-release
         with:
           repository: snoo-box
+          title: Snoo Box
+          version: ${{ needs.prepare.outputs.version }}
           token: ${{ secrets.RELEASE_TOKEN }}
