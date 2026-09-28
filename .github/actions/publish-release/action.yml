@@ -1,5 +1,5 @@
 name: Replace published release
-description: Replace only this program's release after every build succeeds.
+description: Publish a new latest release, then remove this program's previous releases and tags.
 inputs:
   repository:
     description: Source repository name and artifact prefix.
@@ -22,7 +22,7 @@ runs:
         path: release-assets
         merge-multiple: true
         github-token: ${{ env.GH_TOKEN }}
-    - name: Replace matching releases
+    - name: Publish new latest release
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
@@ -37,18 +37,23 @@ runs:
         assets=(release-assets/*)
         (( ${#assets[@]} > 0 ))
         releases="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
-        ids="$(jq -r --arg legacy "$RELEASE_REPOSITORY" --arg prefix "$RELEASE_TITLE v" \
-          '.[] | (.name // "") as $name | select($name == $legacy or ($name | startswith($prefix) and (ltrimstr($prefix) | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")))) | .id' \
+        old_tags="$(jq -r --arg legacy "$RELEASE_REPOSITORY" --arg prefix "$RELEASE_TITLE v" \
+          '.[] | (.name // "") as $name | select($name == $legacy or ($name | startswith($prefix) and (ltrimstr($prefix) | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")))) | .tag_name' \
           <<< "$releases")"
-        for id in $ids; do
-          gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
-        done
-        # Unique tags avoid reusing the previous release's source commit.
         tag="$RELEASE_REPOSITORY-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
         gh release create "$tag" "${assets[@]}" \
           --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-          --title "$title" --notes '' --draft=false --latest=false
+          --title "$title" --notes '' --draft=false --latest
         gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
           --json name,isDraft,body,assets | \
           jq -e --arg name "$title" --argjson count "${#assets[@]}" \
             '.name == $name and (.isDraft == false) and ((.body // "") == "") and (.assets | length == $count)'
+        if [[ -n "$old_tags" ]]; then
+          while IFS= read -r old_tag; do
+            gh release delete "$old_tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          done <<< "$old_tags"
+        fi
+        remaining="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
+        jq -e --arg legacy "$RELEASE_REPOSITORY" --arg prefix "$RELEASE_TITLE v" --arg tag "$tag" \
+          '[.[] | (.name // "") as $name | select($name == $legacy or ($name | startswith($prefix) and (ltrimstr($prefix) | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")))) | .tag_name] == [$tag]' \
+          <<< "$remaining"
