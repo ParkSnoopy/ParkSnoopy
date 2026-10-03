@@ -16,7 +16,7 @@ env:
 
 jobs:
   prepare:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     outputs:
       revision: ${{ steps.source.outputs.revision }}
       version: ${{ steps.source.outputs.version }}
@@ -35,18 +35,99 @@ jobs:
           [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
           version="$(sed -n 's/^const AppVersion = "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"$/\1/p' source/app/src/internal/core/buildinfo/version.go)"
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          if ! grep -Fq 'verify:prebuilt:' source/engines/Taskfile.yml; then
+            echo 'The source revision lacks shared Linux payload support; publish the snoo-box build-graph fix before dispatching this workflow.' >&2
+            exit 1
+          fi
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-  build:
+  linux-engines:
     needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ParkSnoopy/snoo-box
+          ref: ${{ needs.prepare.outputs.revision }}
+          path: source
+          submodules: recursive
+          token: ${{ env.GH_TOKEN }}
+          persist-credentials: false
+      - &restore-engine-tags
+        name: Restore engine release tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          for engine in xray-core hysteria amneziawg-go; do
+            directory="source/protocols/$engine"
+            if [[ "$(git -C "$directory" rev-parse --is-shallow-repository)" == true ]]; then
+              git -C "$directory" fetch --unshallow --tags
+            else
+              git -C "$directory" fetch --tags
+            fi
+          done
+      - &setup-go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          check-latest: true
+          cache: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+      - name: Install Linux engine toolchains
+        run: |
+          set -euo pipefail
+          sudo apt-get update -o Dir::Etc::sourcelist='sources.list.d/ubuntu.sources' -o Dir::Etc::sourceparts='-'
+          sudo apt-get install -y build-essential pkg-config clang clang-tools libc++-dev libc++abi-dev libunwind-dev
+          python -m pip install --upgrade 'conan>=2,<3' cmake ninja
+          rustup update stable nightly
+          conan --version
+          cmake --version
+          ninja --version
+          clang --version
+      - &install-wails
+        name: Install Wails CLI from application module
+        working-directory: source/app
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools_dir="$(mktemp -d)"
+          trap 'rm -r "$tools_dir"' EXIT
+          cp go.mod go.sum "$tools_dir/"
+          GOBIN="$(go env GOPATH)/bin" go -C "$tools_dir" install -mod=mod github.com/wailsapp/wails/v3/cmd/wails3
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Build and record Linux payloads
+        working-directory: source/app
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        run: |
+          set -euo pipefail
+          wails3 task native:build TARGET_OS=linux TARGET_ARCH=amd64
+          git rev-parse HEAD > bin/engines/linux-amd64.revision
+          cd bin
+          engines=(engines/linux-amd64/{xray,hysteria,amneziawg-go,trusttunnel_client,trusttunnel_endpoint,naive,naiveproxy-server})
+          sha256sum "${engines[@]}" > engines/linux-amd64.sha256
+          tar -czf linux-engines.tar.gz "${engines[@]}" engines/linux-amd64.sha256 engines/linux-amd64.revision
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snoo-box-linux-engines
+          path: source/app/bin/linux-engines.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    needs: [prepare, linux-engines]
     environment: snoo-box
+    env:
+      SNOO_PREBUILT_LINUX_ENGINES: 'true'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - {platform: linux, os: ubuntu-24.04}
-          - {platform: android, os: ubuntu-24.04}
+          - {platform: linux, os: ubuntu-latest}
+          - {platform: android, os: ubuntu-latest}
           - {platform: windows, os: windows-2022}
           - {platform: macos, os: macos-15}
           - {platform: ios, os: macos-15}
@@ -60,23 +141,20 @@ jobs:
           submodules: recursive
           token: ${{ env.GH_TOKEN }}
           persist-credentials: false
-      - name: Restore engine release tags
+      - *restore-engine-tags
+      - *setup-go
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/download-artifact@v4
+        with:
+          name: snoo-box-linux-engines
+          path: payload
+          github-token: ${{ env.GH_TOKEN }}
+      - name: Restore verified Linux payloads
         shell: bash
         run: |
           set -euo pipefail
-          for engine in xray-core hysteria amneziawg-go; do
-            directory="source/protocols/$engine"
-            if [[ "$(git -C "$directory" rev-parse --is-shallow-repository)" == true ]]; then
-              git -C "$directory" fetch --unshallow --tags
-            else
-              git -C "$directory" fetch --tags
-            fi
-          done
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: source/app/go.mod
-          cache: false
-      - uses: oven-sh/setup-bun@v2
+          mkdir -p source/app/bin
+          tar -xzf payload/linux-engines.tar.gz -C source/app/bin
       - name: Install Linux dependencies
         if: matrix.platform == 'linux' || matrix.platform == 'android'
         run: |
@@ -105,8 +183,12 @@ jobs:
           : "${STORE_PASSWORD:?Set ANDROID_KEYSTORE_PASSWORD for snoo-box}"
           : "${KEY_ALIAS:?Set ANDROID_KEY_ALIAS for snoo-box}"
           : "${KEY_PASSWORD:?Set ANDROID_KEY_PASSWORD for snoo-box}"
-          sdkmanager 'ndk;27.2.12479018' 'platforms;android-35' 'build-tools;35.0.0'
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          available="$(sdkmanager --list --channel=0)"
+          ndk="$(printf '%s\n' "$available" | python3 -c 'import re,sys; versions=set(re.findall(r"^\s*ndk;([0-9]+(?:\.[0-9]+)+)\s*\|",sys.stdin.read(),re.M)); print(max(versions,key=lambda v:tuple(map(int,v.split(".")))))')"
+          tools="$(printf '%s\n' "$available" | python3 -c 'import re,sys; versions=set(re.findall(r"^\s*build-tools;([0-9]+(?:\.[0-9]+)+)\s*\|",sys.stdin.read(),re.M)); print(max(versions,key=lambda v:tuple(map(int,v.split(".")))))')"
+          sdkmanager "ndk;$ndk" 'platforms;android-35' "build-tools;$tools"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ndk" >> "$GITHUB_ENV"
+          echo "ANDROID_BUILD_TOOLS=$ANDROID_HOME/build-tools/$tools" >> "$GITHUB_ENV"
           echo "ANDROID_KEYSTORE_PASSWORD=$STORE_PASSWORD" >> "$GITHUB_ENV"
           echo "ANDROID_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
           echo "ANDROID_KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
@@ -117,16 +199,11 @@ jobs:
         if: matrix.platform == 'windows'
         shell: pwsh
         run: choco install nsis --yes --no-progress
-      - name: Install Wails CLI from application module
+      - *install-wails
+      - name: Verify imported engine payloads
         working-directory: source/app
         shell: bash
-        run: |
-          set -euo pipefail
-          tools_dir="$(mktemp -d)"
-          cp go.mod go.sum "$tools_dir/"
-          GOBIN="$(go env GOPATH)/bin" go -C "$tools_dir" install -mod=mod github.com/wailsapp/wails/v3/cmd/wails3
-          rm -r "$tools_dir"
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+        run: wails3 task native:verify:prebuilt
       - name: Package application
         working-directory: source/app
         shell: bash
@@ -165,7 +242,7 @@ jobs:
               ;;
             android)
               test -s bin/snoo-box.apk
-              "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --min-sdk-version 21 --verbose bin/snoo-box.apk
+              "$ANDROID_BUILD_TOOLS/apksigner" verify --min-sdk-version 21 --verbose bin/snoo-box.apk
               cp bin/snoo-box.apk dist/snoo-box-android-arm64.apk
               ;;
             windows)
@@ -191,7 +268,7 @@ jobs:
 
   release:
     needs: [prepare, build]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
