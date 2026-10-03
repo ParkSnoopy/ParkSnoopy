@@ -80,7 +80,9 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -o Dir::Etc::sourcelist='sources.list.d/ubuntu.sources' -o Dir::Etc::sourceparts='-'
-          sudo apt-get install -y build-essential pkg-config clang clang-tools libc++-dev libc++abi-dev libunwind-dev
+          # Let libc++ select its matching LLVM unwinder; libunwind-dev conflicts with it.
+          # Added wails3 build depdendency into LLVM installation depdendency install procedure
+          sudo apt-get install -y build-essential pkg-config clang clang-tools libc++-dev libc++abi-dev build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
           python -m pip install --upgrade 'conan>=2,<3' cmake ninja
           rustup update stable nightly
           conan --version
@@ -128,9 +130,9 @@ jobs:
         include:
           - {platform: linux, os: ubuntu-latest}
           - {platform: android, os: ubuntu-latest}
-          - {platform: windows, os: windows-2022}
-          - {platform: macos, os: macos-15}
-          - {platform: ios, os: macos-15}
+          - {platform: windows, os: windows-latest}
+          - {platform: macos, os: macos-latest}
+          - {platform: ios, os: macos-latest}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -165,7 +167,9 @@ jobs:
         if: matrix.platform == 'android'
         with:
           distribution: temurin
-          java-version: '21'
+          # AGP 8.7.3's bundled lint rejects JDK 25; select the newest compatible GA release.
+          java-version: '>=17 <25'
+          check-latest: true
       - uses: android-actions/setup-android@v3
         if: matrix.platform == 'android'
         with:
