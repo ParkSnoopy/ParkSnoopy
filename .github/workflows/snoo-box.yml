@@ -203,7 +203,15 @@ jobs:
       - name: Install NSIS
         if: matrix.platform == 'windows'
         shell: pwsh
-        run: choco install nsis --yes --no-progress
+        run: |
+          $ErrorActionPreference = 'Stop'
+          choco install nsis --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "NSIS installation failed with exit code $LASTEXITCODE" }
+          $nsisDirectory = Join-Path ${env:ProgramFiles(x86)} 'NSIS'
+          if (!(Test-Path -LiteralPath (Join-Path $nsisDirectory 'makensis.exe') -PathType Leaf)) {
+            throw "NSIS compiler not found in $nsisDirectory"
+          }
+          $nsisDirectory | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Expose Git utilities to native Windows tasks
         if: matrix.platform == 'windows'
         shell: bash
@@ -223,6 +231,9 @@ jobs:
             & $command.Source --version
             if ($LASTEXITCODE -ne 0) { throw "$tool failed with exit code $LASTEXITCODE" }
           }
+          $nsis = Get-Command makensis.exe -CommandType Application -ErrorAction Stop
+          & $nsis.Source /VERSION
+          if ($LASTEXITCODE -ne 0) { throw "NSIS compiler failed with exit code $LASTEXITCODE" }
       - *install-wails
       - name: Verify imported engine payloads
         working-directory: source/app
