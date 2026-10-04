@@ -204,6 +204,25 @@ jobs:
         if: matrix.platform == 'windows'
         shell: pwsh
         run: choco install nsis --yes --no-progress
+      - name: Expose Git utilities to native Windows tasks
+        if: matrix.platform == 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Wails/Task resolves external commands with Windows PATH, not Bash's /usr/bin.
+          test -f /usr/bin/sha256sum.exe
+          test -f /usr/bin/cmp.exe
+          cygpath -w /usr/bin >> "$GITHUB_PATH"
+      - name: Verify native Windows utility lookup
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($tool in @('sha256sum.exe', 'cmp.exe')) {
+            $command = Get-Command $tool -CommandType Application -ErrorAction Stop
+            & $command.Source --version
+            if ($LASTEXITCODE -ne 0) { throw "$tool failed with exit code $LASTEXITCODE" }
+          }
       - *install-wails
       - name: Verify imported engine payloads
         working-directory: source/app
