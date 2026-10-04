@@ -36,7 +36,7 @@ jobs:
           test -n "$KEY_PASSWORD"
           test -n "$KEY_ALIAS"
           gh api "repos/$GITHUB_REPOSITORY" >/dev/null
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: ParkSnoopy/Love
           token: ${{ env.GH_TOKEN }}
@@ -59,7 +59,7 @@ jobs:
           python3 tools/compile_corpus.py
           zip -q data.zip assets/data.zip assets/data/manifest.json \
             assets/fonts/NotoSansCJK.ttc assets/fonts/NotoSerifCJK.ttc
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Love-data
           path: data.zip
@@ -81,11 +81,11 @@ jobs:
           - {platform: ios-simulator, os: macos-15}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           token: ${{ env.GH_TOKEN }}
           persist-credentials: false
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: ParkSnoopy/Love
           ref: ${{ needs.prepare.outputs.revision }}
@@ -110,7 +110,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           token: ${{ env.GH_TOKEN }}
           persist-credentials: false

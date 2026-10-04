@@ -21,7 +21,7 @@ jobs:
       revision: ${{ steps.source.outputs.revision }}
       version: ${{ steps.source.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: ParkSnoopy/snoo-box
           path: source
@@ -46,7 +46,7 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: ParkSnoopy/snoo-box
           ref: ${{ needs.prepare.outputs.revision }}
@@ -68,12 +68,12 @@ jobs:
             fi
           done
       - &setup-go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: stable
           check-latest: true
           cache: false
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.x'
       - name: Install Linux engine toolchains
@@ -113,7 +113,7 @@ jobs:
           sha256sum "${engines[@]}" > engines/linux-amd64.sha256
           (cd .. && wails3 task native:verify:prebuilt)
           tar -czf linux-engines.tar.gz "${engines[@]}" engines/linux-amd64.sha256 engines/linux-amd64.revision
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: snoo-box-linux-engines
           path: source/app/bin/linux-engines.tar.gz
@@ -136,7 +136,7 @@ jobs:
           - {platform: ios, os: macos-latest}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: ParkSnoopy/snoo-box
           ref: ${{ needs.prepare.outputs.revision }}
@@ -147,7 +147,7 @@ jobs:
       - *restore-engine-tags
       - *setup-go
       - uses: oven-sh/setup-bun@v2
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: snoo-box-linux-engines
           path: payload
@@ -164,14 +164,14 @@ jobs:
           set -euo pipefail
           sudo apt-get update -o Dir::Etc::sourcelist='sources.list.d/ubuntu.sources' -o Dir::Etc::sourceparts='-'
           sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         if: matrix.platform == 'android'
         with:
           distribution: temurin
           # AGP 8.7.3's bundled lint rejects JDK 25; select the newest compatible GA release.
           java-version: '>=17 <25'
           check-latest: true
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
         if: matrix.platform == 'android'
         with:
           packages: ''
@@ -283,7 +283,7 @@ jobs:
               ;;
             *) exit 1 ;;
           esac
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: snoo-box-release-${{ matrix.platform }}
           path: source/app/dist/*
@@ -296,7 +296,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           token: ${{ env.GH_TOKEN }}
           persist-credentials: false

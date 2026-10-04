@@ -36,7 +36,7 @@ jobs:
           test -n "$KEY_PASSWORD"
           test -n "$KEY_ALIAS"
           gh api "repos/$GITHUB_REPOSITORY" >/dev/null
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: ParkSnoopy/pku_manager
           token: ${{ env.GH_TOKEN }}
@@ -61,7 +61,7 @@ jobs:
           test -s assets/fonts/NotoSansCJK.ttc
           test -s assets/fonts/NotoSerifCJK.ttc
           zip -q data.zip assets/fonts/NotoSansCJK.ttc assets/fonts/NotoSerifCJK.ttc
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: pku_manager-data
           path: data.zip
@@ -83,11 +83,11 @@ jobs:
           - {platform: ios-simulator, os: macos-15}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           token: ${{ env.GH_TOKEN }}
           persist-credentials: false
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: ParkSnoopy/pku_manager
           ref: ${{ needs.prepare.outputs.revision }}
@@ -112,7 +112,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           token: ${{ env.GH_TOKEN }}
           persist-credentials: false

@@ -30,13 +30,13 @@ jobs:
           set -euo pipefail
           test -n "$GH_TOKEN"
           gh api "repos/$GITHUB_REPOSITORY" >/dev/null
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: ParkSnoopy/amnezia-cli
           token: ${{ env.GH_TOKEN }}
           submodules: recursive
           persist-credentials: false
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: false
@@ -56,7 +56,7 @@ jobs:
           mkdir -p package/amnezia-cli dist
           cp -a build/dist/. package/amnezia-cli/
           tar -C package -czf dist/amnezia-cli-linux.tar.gz amnezia-cli
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: amnezia-cli-release-linux
           path: dist/amnezia-cli-linux.tar.gz
@@ -69,7 +69,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           token: ${{ env.GH_TOKEN }}
           persist-credentials: false
