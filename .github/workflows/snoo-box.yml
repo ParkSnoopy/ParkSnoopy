@@ -111,6 +111,7 @@ jobs:
           cd bin
           engines=(engines/linux-amd64/{xray,hysteria,amneziawg-go,trusttunnel_client,trusttunnel_endpoint,naive,naiveproxy-server})
           sha256sum "${engines[@]}" > engines/linux-amd64.sha256
+          (cd .. && wails3 task native:verify:prebuilt)
           tar -czf linux-engines.tar.gz "${engines[@]}" engines/linux-amd64.sha256 engines/linux-amd64.revision
       - uses: actions/upload-artifact@v4
         with:
