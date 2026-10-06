@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="170" height="64" viewBox="0 0 170 64" role="img" aria-labelledby="title desc">
+  <title id="title">ParkSnoopy releases</title>
+  <desc id="desc">Browse releases on GitHub for ParkSnoopy/ParkSnoopy.</desc>
+  <rect width="170" height="64" rx="4.5" fill="#111827"/>
+  <g font-family="Segoe UI, Ubuntu, sans-serif">
+    <g transform="translate(20 20)" fill="none" stroke="#FF6FAE" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 0v16m-6-6 6 6 6-6M2 20v4h20v-4"/>
+    </g>
+    <text x="58" y="38" font-size="18" font-weight="600" fill="#FF6FAE">Releases</text>
+  </g>
+</svg>
