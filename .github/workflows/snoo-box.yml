@@ -100,13 +100,177 @@ jobs:
           cp go.mod go.sum "$tools_dir/"
           GOBIN="$(go env GOPATH)/bin" go -C "$tools_dir" install -mod=mod github.com/wailsapp/wails/v3/cmd/wails3
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Resolve Linux engine cache keys
+        id: engine_inputs
+        working-directory: source/app
+        shell: bash
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        run: |
+          set -euo pipefail
+          wails3 task native:verify
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          root = Path.cwd().parent
+          def capture(*command):
+              return subprocess.check_output(command, text=True).strip()
+
+          def digest(relative):
+              path = root / relative
+              return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+
+          # Only the matching engine's overlays enter its key. The shared recipe
+          # and actual tool versions invalidate binaries when build policy changes.
+          recipe = {path: digest(path) for path in (
+              "engines/Taskfile.yml", "app/go.mod", "app/go.sum",
+          )}
+          tools = {
+              "go": [capture("go", "version"), capture("go", "env", "GOAMD64", "GOEXPERIMENT", "GOFIPS140")],
+              "cpp": [capture("clang", "--version"), capture("cmake", "--version"),
+                      capture("ninja", "--version"), capture("conan", "--version"),
+                      capture("dpkg-query", "-W", "-f=${binary:Package}=${Version}\\n",
+                              "build-essential", "clang", "clang-tools", "libc++-dev", "libc++abi-dev")],
+              "rust": [capture("rustc", "+nightly", "-Vv"), capture("cargo", "+nightly", "--version")],
+              "chromium": [sys.version, capture("ninja", "--version"), capture("rustc", "+stable", "-Vv")],
+          }
+          engines = (
+              ("xray", "xray-core", "xray", "xray", "go", ("engines/xray-tls-certificates.patch",)),
+              ("hysteria", "hysteria", "hysteria", "hysteria", "go", ()),
+              ("amneziawg", "amneziawg-go", "amneziawg-go", "amneziawg-go", "go", ()),
+              ("trusttunnel_client", "trusttunnel-client", "trusttunnel", "trusttunnel_client", "cpp", ()),
+              ("trusttunnel_endpoint", "trusttunnel", "trusttunnel-endpoint", "trusttunnel_endpoint", "rust",
+               ("engines/trusttunnel-camouflage.patch",)),
+              ("naive", "naiveproxy", "naiveproxy", "naive", "chromium", ("engines/naiveproxy-static.patch",)),
+              ("naiveproxy_server", "naiveproxy-server", "naiveproxy-server", "naiveproxy-server", "go",
+               ("engines/naiveproxy-accounting.patch", "engines/naiveproxy-server/stats.go")),
+          )
+          plan = []
+          for name, directory, task, binary, toolchain, overlays in engines:
+              source = root / "protocols" / directory
+              inputs = {
+                  "schema": 1, "target": "linux/amd64", "engine": name,
+                  "image": [os.environ["ImageOS"], os.environ["ImageVersion"]],
+                  "source": capture("git", "-C", str(source), "rev-parse", "HEAD"),
+                  "release": capture("git", "-C", str(source), "describe", "--tags", "--abbrev=0", "HEAD")
+                             if name in ("xray", "hysteria", "amneziawg") else None,
+                  "recipe": recipe, "toolchain": tools[toolchain],
+                  "overlays": {path: digest(path) for path in overlays},
+              }
+              fingerprint = hashlib.sha256(json.dumps(inputs, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+              key = f"snoo-box-linux-amd64-v1-{name}-{fingerprint}"
+              plan.append({"name": name, "task": task, "binary": binary, "key": key})
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              for engine in plan:
+                  print(f'{engine["name"]}={engine["key"]}', file=output)
+              print("plan=" + json.dumps(plan, separators=(",", ":")), file=output)
+          PY
+      # Exact keys only: never restore binaries from a different input revision.
+      # These directories contain one executable and its validation metadata,
+      # never compiler intermediates, exported sources or test keys.
+      - uses: actions/cache@v6
+        id: cache_xray
+        with:
+          path: ${{ runner.temp }}/snoo-box-engine-cache/xray
+          key: ${{ steps.engine_inputs.outputs.xray }}
+      - uses: actions/cache@v6
+        id: cache_hysteria
+        with:
+          path: ${{ runner.temp }}/snoo-box-engine-cache/hysteria
+          key: ${{ steps.engine_inputs.outputs.hysteria }}
+      - uses: actions/cache@v6
+        id: cache_amneziawg
+        with:
+          path: ${{ runner.temp }}/snoo-box-engine-cache/amneziawg
+          key: ${{ steps.engine_inputs.outputs.amneziawg }}
+      - uses: actions/cache@v6
+        id: cache_trusttunnel_client
+        with:
+          path: ${{ runner.temp }}/snoo-box-engine-cache/trusttunnel_client
+          key: ${{ steps.engine_inputs.outputs.trusttunnel_client }}
+      - uses: actions/cache@v6
+        id: cache_trusttunnel_endpoint
+        with:
+          path: ${{ runner.temp }}/snoo-box-engine-cache/trusttunnel_endpoint
+          key: ${{ steps.engine_inputs.outputs.trusttunnel_endpoint }}
+      - uses: actions/cache@v6
+        id: cache_naive
+        with:
+          path: ${{ runner.temp }}/snoo-box-engine-cache/naive
+          key: ${{ steps.engine_inputs.outputs.naive }}
+      - uses: actions/cache@v6
+        id: cache_naiveproxy_server
+        with:
+          path: ${{ runner.temp }}/snoo-box-engine-cache/naiveproxy_server
+          key: ${{ steps.engine_inputs.outputs.naiveproxy_server }}
+      - name: Build or reuse Linux engines
+        working-directory: source/app
+        shell: bash
+        env:
+          RUSTUP_TOOLCHAIN: stable
+          ENGINE_PLAN: ${{ steps.engine_inputs.outputs.plan }}
+          XRAY_CACHE_HIT: ${{ steps.cache_xray.outputs.cache-hit }}
+          HYSTERIA_CACHE_HIT: ${{ steps.cache_hysteria.outputs.cache-hit }}
+          AMNEZIAWG_CACHE_HIT: ${{ steps.cache_amneziawg.outputs.cache-hit }}
+          TRUSTTUNNEL_CLIENT_CACHE_HIT: ${{ steps.cache_trusttunnel_client.outputs.cache-hit }}
+          TRUSTTUNNEL_ENDPOINT_CACHE_HIT: ${{ steps.cache_trusttunnel_endpoint.outputs.cache-hit }}
+          NAIVE_CACHE_HIT: ${{ steps.cache_naive.outputs.cache-hit }}
+          NAIVEPROXY_SERVER_CACHE_HIT: ${{ steps.cache_naiveproxy_server.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob dotglob
+          validate_cache() {
+            local directory=$1 expected_key=$2 entry payload_file
+            local -a entries
+            test -d "$directory" && ! test -L "$directory" || return 1
+            entries=("$directory"/*)
+            test "${#entries[@]}" -eq 3 || return 1
+            for entry in binary key binary.sha256; do
+              payload_file="$directory/$entry"
+              test -f "$payload_file" && test -s "$payload_file" && ! test -L "$payload_file" || return 1
+            done
+            test -x "$directory/binary" || return 1
+            printf '%s\n' "$expected_key" | cmp - "$directory/key" || return 1
+            (cd "$directory" && sha256sum --binary binary | cmp - binary.sha256)
+          }
+          specification=$(python3 -c 'import json,os; [print(e["name"],e["task"],e["binary"],e["key"]) for e in json.loads(os.environ["ENGINE_PLAN"])]')
+          mkdir -p bin/engines/linux-amd64
+          while read -r name task binary key; do
+            cache_directory="$RUNNER_TEMP/snoo-box-engine-cache/$name"
+            hit_variable="${name^^}_CACHE_HIT"
+            case "${!hit_variable}" in
+              true)
+                echo "Reusing Linux engine: $binary"
+                ;;
+              false|'')
+                echo "Building Linux engine: $binary"
+                wails3 task "native:$task" TARGET_OS=linux TARGET_ARCH=amd64
+                rm -rf "$cache_directory"
+                mkdir -p "$cache_directory"
+                install -m 0755 "bin/engines/linux-amd64/$binary" "$cache_directory/binary"
+                printf '%s\n' "$key" > "$cache_directory/key"
+                (cd "$cache_directory" && sha256sum --binary binary > binary.sha256)
+                ;;
+              *) echo "Invalid cache status for $binary" >&2; exit 1 ;;
+            esac
+            # Reject partial, corrupt or substituted entries before staging them.
+            if ! validate_cache "$cache_directory" "$key"; then
+              echo "Invalid cached Linux engine: $binary" >&2
+              exit 1
+            fi
+            install -m 0755 "$cache_directory/binary" "bin/engines/linux-amd64/$binary"
+          done <<< "$specification"
       - name: Build and record Linux payloads
         working-directory: source/app
         env:
           RUSTUP_TOOLCHAIN: stable
         run: |
           set -euo pipefail
-          wails3 task native:build TARGET_OS=linux TARGET_ARCH=amd64
           git rev-parse HEAD > bin/engines/linux-amd64.revision
           cd bin
           engines=(engines/linux-amd64/{xray,hysteria,amneziawg-go,trusttunnel_client,trusttunnel_endpoint,naive,naiveproxy-server})
