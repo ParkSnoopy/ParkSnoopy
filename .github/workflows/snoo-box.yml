@@ -3,6 +3,8 @@ name: snoo-box
 on:
   workflow_dispatch:
   workflow_call:
+  schedule:
+    - cron: '17 3 * * *'
 
 permissions:
   contents: read
@@ -45,6 +47,8 @@ jobs:
   linux-engines:
     needs: prepare
     runs-on: ubuntu-latest
+    env:
+      GO_CACHE_TARGET: linux-engines
     steps:
       - uses: actions/checkout@v7
         with:
@@ -69,20 +73,58 @@ jobs:
           done
       - &setup-go
         uses: actions/setup-go@v7
+        id: setup_go
         with:
           go-version: stable
           check-latest: true
+          # Target-scoped caches avoid an immutable snapshot shared by the
+          # producer and both Linux platform jobs.
           cache: false
+      - &go-cache-paths
+        name: Resolve Go cache directories
+        id: go_cache_paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+          echo "image=$ImageVersion" >> "$GITHUB_OUTPUT"
+      - &restore-go-cache
+        name: Restore Go compiler and module cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ steps.go_cache_paths.outputs.build }}
+            ${{ steps.go_cache_paths.outputs.modules }}
+          key: snoo-box-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.GO_CACHE_TARGET }}-${{ steps.setup_go.outputs.go-version }}-${{ hashFiles('source/**/go.mod', 'source/**/go.sum', 'source/**/go.work', 'source/**/go.work.sum') }}-${{ needs.prepare.outputs.revision }}
+          # Prefix reuse is safe for Go's content-addressed compilation cache,
+          # never for finished engine binaries. New source revisions save
+          # refreshed compiler outputs instead of freezing the first snapshot.
+          restore-keys: |
+            snoo-box-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.GO_CACHE_TARGET }}-${{ steps.setup_go.outputs.go-version }}-${{ hashFiles('source/**/go.mod', 'source/**/go.sum', 'source/**/go.work', 'source/**/go.work.sum') }}-
+            snoo-box-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.GO_CACHE_TARGET }}-${{ steps.setup_go.outputs.go-version }}-
       - uses: actions/setup-python@v7
         with:
           python-version: '3.x'
+      - &restore-apt-downloads
+        name: Restore Linux package downloads
+        if: runner.os == 'Linux'
+        uses: actions/cache@v6
+        with:
+          # Cache archives only, not root-owned APT locks or partial downloads.
+          # APT still resolves and verifies the current repository packages.
+          path: ${{ runner.temp }}/snoo-box-apt-cache/*.deb
+          key: snoo-box-apt-v1-${{ runner.arch }}-${{ steps.go_cache_paths.outputs.image }}-${{ env.GO_CACHE_TARGET }}-${{ needs.prepare.outputs.revision }}
+          restore-keys: |
+            snoo-box-apt-v1-${{ runner.arch }}-${{ steps.go_cache_paths.outputs.image }}-${{ env.GO_CACHE_TARGET }}-
       - name: Install Linux engine toolchains
         run: |
           set -euo pipefail
-          sudo apt-get update -o Dir::Etc::sourcelist='sources.list.d/ubuntu.sources' -o Dir::Etc::sourceparts='-'
+          mkdir -p "$RUNNER_TEMP/snoo-box-apt-cache"
+          sudo apt-get update -o Dir::Etc::sourcelist='sources.list.d/ubuntu.sources' -o Dir::Etc::sourceparts='-' -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
           # Let libc++ select its matching LLVM unwinder; libunwind-dev conflicts with it.
           # Added wails3 build depdendency into LLVM installation depdendency install procedure
-          sudo apt-get install -y build-essential pkg-config clang clang-tools libc++-dev libc++abi-dev build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
+          sudo apt-get install -y -o Dir::Cache::archives="$RUNNER_TEMP/snoo-box-apt-cache" -o APT::Keep-Downloaded-Packages=true -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 build-essential pkg-config clang clang-tools libc++-dev libc++abi-dev libgtk-4-dev libwebkitgtk-6.0-dev
           python -m pip install --upgrade 'conan>=2,<3' cmake ninja
           rustup update stable nightly
           conan --version
@@ -127,9 +169,14 @@ jobs:
 
           # Only the matching engine's overlays enter its key. The shared recipe
           # and actual tool versions invalidate binaries when build policy changes.
-          recipe = {path: digest(path) for path in (
-              "engines/Taskfile.yml", "app/go.mod", "app/go.sum",
-          )}
+          # App dependency churn does not change standalone engine binaries.
+          # Retain the actual Wails/Task CLI build identity, not the whole app
+          # module graph; the first metadata line contains only its install path.
+          wails = Path(capture("go", "env", "GOPATH")) / "bin" / "wails3"
+          recipe = {
+              "engines/Taskfile.yml": digest("engines/Taskfile.yml"),
+              "wails_cli": capture("go", "version", "-m", str(wails)).splitlines()[1:],
+          }
           tools = {
               "go": [capture("go", "version"), capture("go", "env", "GOAMD64", "GOEXPERIMENT", "GOFIPS140")],
               "cpp": [capture("clang", "--version"), capture("cmake", "--version"),
@@ -289,6 +336,7 @@ jobs:
     environment: snoo-box
     env:
       SNOO_PREBUILT_LINUX_ENGINES: 'true'
+      GO_CACHE_TARGET: ${{ matrix.platform }}
     strategy:
       fail-fast: false
       matrix:
@@ -310,6 +358,8 @@ jobs:
           persist-credentials: false
       - *restore-engine-tags
       - *setup-go
+      - *go-cache-paths
+      - *restore-go-cache
       - uses: oven-sh/setup-bun@v2
       - uses: actions/download-artifact@v8
         with:
@@ -322,13 +372,16 @@ jobs:
           set -euo pipefail
           mkdir -p source/app/bin
           tar -xzf payload/linux-engines.tar.gz -C source/app/bin
+      - *restore-apt-downloads
       - name: Install Linux dependencies
         if: matrix.platform == 'linux' || matrix.platform == 'android'
         run: |
           set -euo pipefail
-          sudo apt-get update -o Dir::Etc::sourcelist='sources.list.d/ubuntu.sources' -o Dir::Etc::sourceparts='-'
-          sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
+          mkdir -p "$RUNNER_TEMP/snoo-box-apt-cache"
+          sudo apt-get update -o Dir::Etc::sourcelist='sources.list.d/ubuntu.sources' -o Dir::Etc::sourceparts='-' -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
+          sudo apt-get install -y -o Dir::Cache::archives="$RUNNER_TEMP/snoo-box-apt-cache" -o APT::Keep-Downloaded-Packages=true -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
       - uses: actions/setup-java@v6
+        id: setup_java
         if: matrix.platform == 'android'
         with:
           distribution: temurin
@@ -339,6 +392,18 @@ jobs:
         if: matrix.platform == 'android'
         with:
           packages: ''
+      - name: Restore Android dependency downloads
+        if: matrix.platform == 'android'
+        uses: actions/cache@v6
+        with:
+          # Only dependency downloads: no signed APKs, keystores, daemon state
+          # or project build outputs belong in this cache.
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper
+          key: snoo-box-gradle-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup_java.outputs.version }}-${{ hashFiles('source/app/build/android/**/*.gradle', 'source/app/build/android/**/*.gradle.kts', 'source/app/build/android/**/gradle-wrapper.properties') }}
+          restore-keys: |
+            snoo-box-gradle-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup_java.outputs.version }}-
       - name: Install Android SDK and signing key
         if: matrix.platform == 'android'
         env:
