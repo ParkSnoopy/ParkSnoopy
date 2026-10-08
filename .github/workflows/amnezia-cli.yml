@@ -40,7 +40,9 @@ jobs:
       - name: actions/setup-go@v7 - Set Up Go
         uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
+          # Native engine modules require newer Go than the root module.
+          go-version: stable
+          check-latest: true
           cache: false
       - name: bash - Build and Package Complete Bundle
         id: package
