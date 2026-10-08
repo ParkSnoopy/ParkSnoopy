@@ -1,4 +1,4 @@
-name: Build Flutter platform
+name: Build Flutter Platform
 description: Build and archive an already prepared native Flutter source tree.
 inputs:
   repository:
@@ -16,35 +16,37 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/download-artifact@v8
+    - name: actions/download-artifact@v8 - Download Build Assets
+      uses: actions/download-artifact@v8
       with:
         name: ${{ inputs.repository }}-data
         path: source
         github-token: ${{ env.GH_TOKEN }}
-    - name: Restore build assets
+    - name: bash - Restore Build Assets
       working-directory: source
       shell: bash
       run: unzip -q -o data.zip
-    - uses: actions/setup-java@v6
+    - name: actions/setup-java@v6 - Set Up Java
+      uses: actions/setup-java@v6
       if: inputs.platform == 'android'
       with:
         distribution: temurin
         java-version: '17'
-    - name: Restore Android signing key
+    - name: bash - Restore Android Signing Key
       if: inputs.platform == 'android'
       working-directory: source
       shell: bash
       run: |
         set -euo pipefail
-        test -n "$ANDROID_KEYSTORE_BASE64"
-        test -n "$ANDROID_KEYSTORE_PASSWORD"
-        test -n "$ANDROID_KEY_ALIAS"
-        test -n "$ANDROID_KEY_PASSWORD"
+        test "$ANDROID_KEYSTORE_BASE64" != ""
+        test "$ANDROID_KEYSTORE_PASSWORD" != ""
+        test "$ANDROID_KEY_ALIAS" != ""
+        test "$ANDROID_KEY_PASSWORD" != ""
         printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
         keytool -list -keystore "$RUNNER_TEMP/release.jks" \
           -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" >/dev/null
         echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
-    - name: Install Linux dependencies
+    - name: bash - Install Linux Dependencies
       if: inputs.platform == 'linux'
       shell: bash
       run: |
@@ -55,11 +57,12 @@ runs:
         sudo apt-get install -y clang cmake ninja-build pkg-config \
           libgtk-3-dev liblzma-dev libsqlite3-dev libayatana-appindicator3-dev \
           libsecret-1-dev libjsoncpp-dev
-    - uses: subosito/flutter-action@v2
+    - name: subosito/flutter-action@v2 - Set Up Flutter
+      uses: subosito/flutter-action@v2
       with:
         channel: stable
         cache: true
-    - name: Build and package
+    - name: bash - Build and Package
       working-directory: source
       shell: bash
       env:
@@ -176,11 +179,12 @@ runs:
             ;;
           *) echo "Unsupported platform: $PLATFORM" >&2; exit 1 ;;
         esac
-    - name: Remove Android signing key
+    - name: bash - Remove Android Signing Key
       if: always() && inputs.platform == 'android'
       shell: bash
       run: rm -f "$RUNNER_TEMP/release.jks"
-    - uses: actions/upload-artifact@v7
+    - name: actions/upload-artifact@v7 - Upload Release Packages
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ inputs.repository }}-release-${{ inputs.platform }}
         path: dist/*

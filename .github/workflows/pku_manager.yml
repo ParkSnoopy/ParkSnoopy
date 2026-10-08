@@ -1,4 +1,4 @@
-name: pku_manager
+name: PKU Manager
 
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ jobs:
       revision: ${{ steps.source.outputs.revision }}
       version: ${{ steps.source.outputs.version }}
     steps:
-      - name: Check access and signing secrets
+      - name: bash - Check Access and Signing Secrets
         env:
           KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -30,26 +30,28 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           set -euo pipefail
-          test -n "$GH_TOKEN"
-          test -n "$KEY"
-          test -n "$STORE_PASSWORD"
-          test -n "$KEY_PASSWORD"
-          test -n "$KEY_ALIAS"
+          test "$GH_TOKEN" != ""
+          test "$KEY" != ""
+          test "$STORE_PASSWORD" != ""
+          test "$KEY_PASSWORD" != ""
+          test "$KEY_ALIAS" != ""
           gh api "repos/$GITHUB_REPOSITORY" >/dev/null
-      - uses: actions/checkout@v7
+      - name: actions/checkout@v7 - Check Out Source
+        uses: actions/checkout@v7
         with:
           repository: ParkSnoopy/pku_manager
           token: ${{ env.GH_TOKEN }}
           lfs: false
           persist-credentials: false
-      - id: source
+      - name: bash - Resolve Source Revision
+        id: source
         run: |
           set -euo pipefail
           version="$(sed -n 's/^version: *\([^+ ]*\).*/\1/p' pubspec.yaml)"
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - name: Package fonts
+      - name: bash - Package Fonts
         run: |
           set -euo pipefail
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/sans.zip" \
@@ -61,7 +63,8 @@ jobs:
           test -s assets/fonts/NotoSansCJK.ttc
           test -s assets/fonts/NotoSerifCJK.ttc
           zip -q data.zip assets/fonts/NotoSansCJK.ttc assets/fonts/NotoSerifCJK.ttc
-      - uses: actions/upload-artifact@v7
+      - name: actions/upload-artifact@v7 - Upload Build Assets
+        uses: actions/upload-artifact@v7
         with:
           name: pku_manager-data
           path: data.zip
@@ -83,11 +86,13 @@ jobs:
           - {platform: ios-simulator, os: macos-15}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
+      - name: actions/checkout@v7 - Check Out Workflow Actions
+        uses: actions/checkout@v7
         with:
           token: ${{ env.GH_TOKEN }}
           persist-credentials: false
-      - uses: actions/checkout@v7
+      - name: actions/checkout@v7 - Check Out Pinned Source
+        uses: actions/checkout@v7
         with:
           repository: ParkSnoopy/pku_manager
           ref: ${{ needs.prepare.outputs.revision }}
@@ -95,7 +100,8 @@ jobs:
           token: ${{ env.GH_TOKEN }}
           lfs: false
           persist-credentials: false
-      - uses: ./.github/actions/flutter-build
+      - name: ./.github/actions/flutter-build - Build Flutter Platform
+        uses: ./.github/actions/flutter-build
         with:
           repository: pku_manager
           title: PKU Manager
@@ -113,11 +119,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - name: actions/checkout@v7 - Check Out Release Action
+        uses: actions/checkout@v7
         with:
           token: ${{ env.GH_TOKEN }}
           persist-credentials: false
-      - uses: ./.github/actions/publish-release
+      - name: ./.github/actions/publish-release - Publish Release
+        uses: ./.github/actions/publish-release
         with:
           repository: pku_manager
           title: PKU Manager

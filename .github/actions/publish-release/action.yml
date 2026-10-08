@@ -1,4 +1,4 @@
-name: Replace published release
+name: Replace Published Release
 description: Remove this program's previous releases and tags, then publish a new latest release.
 inputs:
   repository:
@@ -16,13 +16,14 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/download-artifact@v8
+    - name: actions/download-artifact@v8 - Download Release Packages
+      uses: actions/download-artifact@v8
       with:
         pattern: ${{ inputs.repository }}-release-*
         path: release-assets
         merge-multiple: true
         github-token: ${{ env.GH_TOKEN }}
-    - name: Replace with new latest release
+    - name: bash - Replace with New Latest Release
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}

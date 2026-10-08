@@ -1,4 +1,4 @@
-name: snoo-box
+name: Snoo Box
 
 on:
   workflow_dispatch:
@@ -23,13 +23,14 @@ jobs:
       revision: ${{ steps.source.outputs.revision }}
       version: ${{ steps.source.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
+      - name: actions/checkout@v7 - Check Out Source
+        uses: actions/checkout@v7
         with:
           repository: ParkSnoopy/snoo-box
           path: source
           token: ${{ env.GH_TOKEN }}
           persist-credentials: false
-      - name: Resolve source revision
+      - name: bash - Resolve Source Revision
         id: source
         run: |
           set -euo pipefail
@@ -50,7 +51,8 @@ jobs:
     env:
       GO_CACHE_TARGET: linux-engines
     steps:
-      - uses: actions/checkout@v7
+      - name: actions/checkout@v7 - Check Out Pinned Source
+        uses: actions/checkout@v7
         with:
           repository: ParkSnoopy/snoo-box
           ref: ${{ needs.prepare.outputs.revision }}
@@ -59,7 +61,7 @@ jobs:
           token: ${{ env.GH_TOKEN }}
           persist-credentials: false
       - &restore-engine-tags
-        name: Restore engine release tags
+        name: bash - Restore Engine Release Tags
         shell: bash
         run: |
           set -euo pipefail
@@ -72,6 +74,7 @@ jobs:
             fi
           done
       - &setup-go
+        name: actions/setup-go@v7 - Set Up Go
         uses: actions/setup-go@v7
         id: setup_go
         with:
@@ -81,7 +84,7 @@ jobs:
           # producer and both Linux platform jobs.
           cache: false
       - &go-cache-paths
-        name: Resolve Go cache directories
+        name: bash - Resolve Go Cache Directories
         id: go_cache_paths
         shell: bash
         run: |
@@ -90,7 +93,7 @@ jobs:
           echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
           echo "image=$ImageVersion" >> "$GITHUB_OUTPUT"
       - &restore-go-cache
-        name: Restore Go compiler and module cache
+        name: actions/cache@v6 - Restore Go Compiler and Module Cache
         uses: actions/cache@v6
         with:
           path: |
@@ -103,11 +106,12 @@ jobs:
           restore-keys: |
             snoo-box-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.GO_CACHE_TARGET }}-${{ steps.setup_go.outputs.go-version }}-${{ hashFiles('source/**/go.mod', 'source/**/go.sum', 'source/**/go.work', 'source/**/go.work.sum') }}-
             snoo-box-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.GO_CACHE_TARGET }}-${{ steps.setup_go.outputs.go-version }}-
-      - uses: actions/setup-python@v7
+      - name: actions/setup-python@v7 - Set Up Python
+        uses: actions/setup-python@v7
         with:
           python-version: '3.x'
       - &restore-apt-downloads
-        name: Restore Linux package downloads
+        name: actions/cache@v6 - Restore Linux Package Downloads
         if: runner.os == 'Linux'
         uses: actions/cache@v6
         with:
@@ -117,7 +121,7 @@ jobs:
           key: snoo-box-apt-v1-${{ runner.arch }}-${{ steps.go_cache_paths.outputs.image }}-${{ env.GO_CACHE_TARGET }}-${{ needs.prepare.outputs.revision }}
           restore-keys: |
             snoo-box-apt-v1-${{ runner.arch }}-${{ steps.go_cache_paths.outputs.image }}-${{ env.GO_CACHE_TARGET }}-
-      - name: Install Linux engine toolchains
+      - name: bash - Install Linux Engine Toolchains
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/snoo-box-apt-cache"
@@ -132,7 +136,7 @@ jobs:
           ninja --version
           clang --version
       - &install-wails
-        name: Install Wails CLI from application module
+        name: bash - Install Wails CLI from Application Module
         working-directory: source/app
         shell: bash
         run: |
@@ -142,7 +146,7 @@ jobs:
           cp go.mod go.sum "$tools_dir/"
           GOBIN="$(go env GOPATH)/bin" go -C "$tools_dir" install -mod=mod github.com/wailsapp/wails/v3/cmd/wails3
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-      - name: Resolve Linux engine cache keys
+      - name: bash - Resolve Linux Engine Cache Keys
         id: engine_inputs
         working-directory: source/app
         shell: bash
@@ -220,42 +224,49 @@ jobs:
       # Exact keys only: never restore binaries from a different input revision.
       # These directories contain one executable and its validation metadata,
       # never compiler intermediates, exported sources or test keys.
-      - uses: actions/cache@v6
+      - name: actions/cache@v6 - Cache Xray Binary
+        uses: actions/cache@v6
         id: cache_xray
         with:
           path: ${{ runner.temp }}/snoo-box-engine-cache/xray
           key: ${{ steps.engine_inputs.outputs.xray }}
-      - uses: actions/cache@v6
+      - name: actions/cache@v6 - Cache Hysteria Binary
+        uses: actions/cache@v6
         id: cache_hysteria
         with:
           path: ${{ runner.temp }}/snoo-box-engine-cache/hysteria
           key: ${{ steps.engine_inputs.outputs.hysteria }}
-      - uses: actions/cache@v6
+      - name: actions/cache@v6 - Cache AmneziaWG Binary
+        uses: actions/cache@v6
         id: cache_amneziawg
         with:
           path: ${{ runner.temp }}/snoo-box-engine-cache/amneziawg
           key: ${{ steps.engine_inputs.outputs.amneziawg }}
-      - uses: actions/cache@v6
+      - name: actions/cache@v6 - Cache TrustTunnel Client Binary
+        uses: actions/cache@v6
         id: cache_trusttunnel_client
         with:
           path: ${{ runner.temp }}/snoo-box-engine-cache/trusttunnel_client
           key: ${{ steps.engine_inputs.outputs.trusttunnel_client }}
-      - uses: actions/cache@v6
+      - name: actions/cache@v6 - Cache TrustTunnel Endpoint Binary
+        uses: actions/cache@v6
         id: cache_trusttunnel_endpoint
         with:
           path: ${{ runner.temp }}/snoo-box-engine-cache/trusttunnel_endpoint
           key: ${{ steps.engine_inputs.outputs.trusttunnel_endpoint }}
-      - uses: actions/cache@v6
+      - name: actions/cache@v6 - Cache NaiveProxy Client Binary
+        uses: actions/cache@v6
         id: cache_naive
         with:
           path: ${{ runner.temp }}/snoo-box-engine-cache/naive
           key: ${{ steps.engine_inputs.outputs.naive }}
-      - uses: actions/cache@v6
+      - name: actions/cache@v6 - Cache NaiveProxy Server Binary
+        uses: actions/cache@v6
         id: cache_naiveproxy_server
         with:
           path: ${{ runner.temp }}/snoo-box-engine-cache/naiveproxy_server
           key: ${{ steps.engine_inputs.outputs.naiveproxy_server }}
-      - name: Build or reuse Linux engines
+      - name: bash - Build or Reuse Linux Engines
         working-directory: source/app
         shell: bash
         env:
@@ -312,7 +323,7 @@ jobs:
             fi
             install -m 0755 "$cache_directory/binary" "bin/engines/linux-amd64/$binary"
           done <<< "$specification"
-      - name: Build and record Linux payloads
+      - name: bash - Build and Record Linux Payloads
         working-directory: source/app
         env:
           RUSTUP_TOOLCHAIN: stable
@@ -324,7 +335,8 @@ jobs:
           sha256sum --binary "${engines[@]}" > engines/linux-amd64.sha256
           (cd .. && wails3 task native:verify:prebuilt)
           tar -czf linux-engines.tar.gz "${engines[@]}" engines/linux-amd64.sha256 engines/linux-amd64.revision
-      - uses: actions/upload-artifact@v7
+      - name: actions/upload-artifact@v7 - Upload Linux Engine Payloads
+        uses: actions/upload-artifact@v7
         with:
           name: snoo-box-linux-engines
           path: source/app/bin/linux-engines.tar.gz
@@ -348,7 +360,8 @@ jobs:
           - {platform: ios, os: macos-latest}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
+      - name: actions/checkout@v7 - Check Out Pinned Source
+        uses: actions/checkout@v7
         with:
           repository: ParkSnoopy/snoo-box
           ref: ${{ needs.prepare.outputs.revision }}
@@ -360,27 +373,30 @@ jobs:
       - *setup-go
       - *go-cache-paths
       - *restore-go-cache
-      - uses: oven-sh/setup-bun@v2
-      - uses: actions/download-artifact@v8
+      - name: oven-sh/setup-bun@v2 - Set Up Bun
+        uses: oven-sh/setup-bun@v2
+      - name: actions/download-artifact@v8 - Download Linux Engine Payloads
+        uses: actions/download-artifact@v8
         with:
           name: snoo-box-linux-engines
           path: payload
           github-token: ${{ env.GH_TOKEN }}
-      - name: Restore verified Linux payloads
+      - name: bash - Restore Verified Linux Payloads
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p source/app/bin
           tar -xzf payload/linux-engines.tar.gz -C source/app/bin
       - *restore-apt-downloads
-      - name: Install Linux dependencies
+      - name: bash - Install Linux Dependencies
         if: matrix.platform == 'linux' || matrix.platform == 'android'
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/snoo-box-apt-cache"
           sudo apt-get update -o Dir::Etc::sourcelist='sources.list.d/ubuntu.sources' -o Dir::Etc::sourceparts='-' -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
           sudo apt-get install -y -o Dir::Cache::archives="$RUNNER_TEMP/snoo-box-apt-cache" -o APT::Keep-Downloaded-Packages=true -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
-      - uses: actions/setup-java@v6
+      - name: actions/setup-java@v6 - Set Up Java
+        uses: actions/setup-java@v6
         id: setup_java
         if: matrix.platform == 'android'
         with:
@@ -388,11 +404,12 @@ jobs:
           # AGP 8.7.3's bundled lint rejects JDK 25; select the newest compatible GA release.
           java-version: '>=17 <25'
           check-latest: true
-      - uses: android-actions/setup-android@v4
+      - name: android-actions/setup-android@v4 - Set Up Android SDK
+        uses: android-actions/setup-android@v4
         if: matrix.platform == 'android'
         with:
           packages: ''
-      - name: Restore Android dependency downloads
+      - name: actions/cache@v6 - Restore Android Dependency Downloads
         if: matrix.platform == 'android'
         uses: actions/cache@v6
         with:
@@ -404,7 +421,7 @@ jobs:
           key: snoo-box-gradle-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup_java.outputs.version }}-${{ hashFiles('source/app/build/android/**/*.gradle', 'source/app/build/android/**/*.gradle.kts', 'source/app/build/android/**/gradle-wrapper.properties') }}
           restore-keys: |
             snoo-box-gradle-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup_java.outputs.version }}-
-      - name: Install Android SDK and signing key
+      - name: bash - Install Android SDK and Signing Key
         if: matrix.platform == 'android'
         env:
           KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -429,7 +446,7 @@ jobs:
           echo "$KEY" | base64 --decode > "$RUNNER_TEMP/snoo-box.jks"
           keytool -list -keystore "$RUNNER_TEMP/snoo-box.jks" -storepass "$STORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
           echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/snoo-box.jks" >> "$GITHUB_ENV"
-      - name: Install NSIS
+      - name: pwsh - Install NSIS
         if: matrix.platform == 'windows'
         shell: pwsh
         run: |
@@ -441,7 +458,7 @@ jobs:
             throw "NSIS compiler not found in $nsisDirectory"
           }
           $nsisDirectory | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-      - name: Expose Git utilities to native Windows tasks
+      - name: bash - Expose Git Utilities to Native Windows Tasks
         if: matrix.platform == 'windows'
         shell: bash
         run: |
@@ -450,7 +467,7 @@ jobs:
           test -f /usr/bin/sha256sum.exe
           test -f /usr/bin/cmp.exe
           cygpath -w /usr/bin >> "$GITHUB_PATH"
-      - name: Verify native Windows utility lookup
+      - name: pwsh - Verify Native Windows Utility Lookup
         if: matrix.platform == 'windows'
         shell: pwsh
         run: |
@@ -464,11 +481,11 @@ jobs:
           & $nsis.Source /VERSION
           if ($LASTEXITCODE -ne 0) { throw "NSIS compiler failed with exit code $LASTEXITCODE" }
       - *install-wails
-      - name: Verify imported engine payloads
+      - name: bash - Verify Imported Engine Payloads
         working-directory: source/app
         shell: bash
         run: wails3 task native:verify:prebuilt
-      - name: Package application
+      - name: bash - Package Application
         working-directory: source/app
         shell: bash
         env:
@@ -487,7 +504,7 @@ jobs:
             ios) wails3 task ios:package IOS_PLATFORM=simulator ;;
             *) exit 1 ;;
           esac
-      - name: Stage release packages
+      - name: bash - Stage Release Packages
         working-directory: source/app
         shell: bash
         env:
@@ -525,7 +542,8 @@ jobs:
               ;;
             *) exit 1 ;;
           esac
-      - uses: actions/upload-artifact@v7
+      - name: actions/upload-artifact@v7 - Upload Release Packages
+        uses: actions/upload-artifact@v7
         with:
           name: snoo-box-release-${{ matrix.platform }}
           path: source/app/dist/*
@@ -538,11 +556,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - name: actions/checkout@v7 - Check Out Release Action
+        uses: actions/checkout@v7
         with:
           token: ${{ env.GH_TOKEN }}
           persist-credentials: false
-      - uses: ./.github/actions/publish-release
+      - name: ./.github/actions/publish-release - Publish Release
+        uses: ./.github/actions/publish-release
         with:
           repository: snoo-box
           title: Snoo Box
