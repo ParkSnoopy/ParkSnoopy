@@ -55,11 +55,11 @@ jobs:
           done
           mkdir -p package/amnezia-cli dist
           cp -a build/dist/. package/amnezia-cli/
-          tar -C package -czf dist/amnezia-cli-linux.tar.gz amnezia-cli
+          tar -C package -czf "dist/Amnezia_CLI_v$version-amd64-Linux_CLI.tar.gz" amnezia-cli
       - uses: actions/upload-artifact@v7
         with:
           name: amnezia-cli-release-linux
-          path: dist/amnezia-cli-linux.tar.gz
+          path: dist/Amnezia_CLI_v*-amd64-Linux_CLI.tar.gz
           if-no-files-found: error
           retention-days: 1
 

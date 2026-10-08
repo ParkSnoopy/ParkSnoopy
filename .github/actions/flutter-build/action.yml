@@ -4,6 +4,9 @@ inputs:
   repository:
     description: Source repository name.
     required: true
+  title:
+    description: Existing project display title used in release filenames.
+    required: true
   platform:
     description: Android, Linux, macOS, Windows, iOS, or iOS simulator target.
     required: true
@@ -61,6 +64,7 @@ runs:
       shell: bash
       env:
         PROGRAM: ${{ inputs.repository }}
+        DISPLAY_NAME: ${{ inputs.title }}
         PLATFORM: ${{ inputs.platform }}
         SOURCE_SHA: ${{ inputs.revision }}
       run: |
@@ -68,26 +72,50 @@ runs:
         flutter pub get
         version="$(sed -n 's/^version: *\([^+ ]*\).*/\1/p' pubspec.yaml)"
         [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+        prefix="${DISPLAY_NAME//[[:space:]]/_}_v$version"
         IFS=. read -r major minor patch <<< "$version"
         (( 10#$minor < 1000 && 10#$patch < 1000 ))
         number=$((10#$major * 1000000 + 10#$minor * 1000 + 10#$patch))
         (( number >= 1 && number <= 2100000000 ))
         args=(--build-name "$version" --build-number "$number" "--dart-define=BUILD_COMMIT=$SOURCE_SHA")
         mkdir -p ../dist
+        archive_apple_bundle() {
+          local bundle=$1 native_arch=$2 architecture=$3 platform=$4 info executable payload_file actual_arch
+          if [[ "$platform" == macOS ]]; then
+            info="$bundle/Contents/Info.plist"
+            payload_file="$bundle/Contents/MacOS"
+          else
+            info="$bundle/Info.plist"
+            payload_file="$bundle"
+          fi
+          executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$info")
+          actual_arch="$(lipo -archs "$payload_file/$executable")"
+          if [[ "$actual_arch" != "$native_arch" ]]; then
+            echo "Expected $native_arch in $bundle; found $actual_arch" >&2
+            exit 1
+          fi
+          ditto -c -k --sequesterRsrc --keepParent "$bundle" "../dist/$prefix-$architecture-$platform.zip"
+        }
         case "$PLATFORM" in
           android)
-            flutter build apk --release "${args[@]}"
+            flutter build apk --release --target-platform android-arm64,android-x64 --split-per-abi "${args[@]}"
             for apksigner in "$ANDROID_HOME"/build-tools/*/apksigner; do
               [[ -x "$apksigner" ]] && break
             done
             test -x "$apksigner"
-            # Enforce the CI key even when upstream Gradle uses debug signing.
-            "$apksigner" sign --ks "$ANDROID_KEYSTORE_PATH" \
-              --ks-key-alias "$ANDROID_KEY_ALIAS" \
-              --ks-pass env:ANDROID_KEYSTORE_PASSWORD --key-pass env:ANDROID_KEY_PASSWORD \
-              --v4-signing-enabled false --out "../dist/$PROGRAM-android.apk" \
-              build/app/outputs/flutter-apk/app-release.apk
-            "$apksigner" verify --verbose --print-certs "../dist/$PROGRAM-android.apk"
+            # Enforce the CI key separately for each supported 64-bit ABI.
+            for architecture in amd64 arm64; do
+              case "$architecture" in
+                amd64) abi=x86_64 ;;
+                arm64) abi=arm64-v8a ;;
+              esac
+              "$apksigner" sign --ks "$ANDROID_KEYSTORE_PATH" \
+                --ks-key-alias "$ANDROID_KEY_ALIAS" \
+                --ks-pass env:ANDROID_KEYSTORE_PASSWORD --key-pass env:ANDROID_KEY_PASSWORD \
+                --v4-signing-enabled false --out "../dist/$prefix-$architecture-Android.apk" \
+                "build/app/outputs/flutter-apk/app-$abi-release.apk"
+              "$apksigner" verify --verbose --print-certs "../dist/$prefix-$architecture-Android.apk"
+            done
             ;;
           linux)
             flutter build linux --release "${args[@]}"
@@ -102,33 +130,49 @@ runs:
               cmake -S packaging/linux -B build/appimage -G Ninja \
                 -DAPPIMAGETOOL="$RUNNER_TEMP/appimagetool" -DRUNTIME="$RUNNER_TEMP/runtime-x86_64"
               cmake --build build/appimage --target appimage
-              cp build/appimage/pku-manager.AppImage "../dist/$PROGRAM-linux.AppImage"
+              cp build/appimage/pku-manager.AppImage "../dist/$prefix-amd64-Linux.AppImage"
             else
-              tar -C build/linux/x64/release/bundle -czf "../dist/$PROGRAM-linux.tar.gz" .
+              tar -C build/linux/x64/release/bundle -czf "../dist/$prefix-amd64-Linux.tar.gz" .
             fi
             ;;
           macos)
-            flutter build macos --release "${args[@]}"
-            ditto -c -k --sequesterRsrc --keepParent \
-              "build/macos/Build/Products/Release/$PROGRAM.app" "../dist/$PROGRAM-macos.zip"
+            # Flutter's release default is universal. Forward explicit Xcode
+            # settings instead of attaching an arbitrary architecture label.
+            flutter config --no-enable-macos-arm64-only
+            for architecture in amd64 arm64; do
+              case "$architecture" in
+                amd64) native_arch=x86_64 ;;
+                arm64) native_arch=arm64 ;;
+              esac
+              FLUTTER_XCODE_ARCHS="$native_arch" FLUTTER_XCODE_ONLY_ACTIVE_ARCH=NO \
+                flutter build macos --release "${args[@]}"
+              archive_apple_bundle "build/macos/Build/Products/Release/$PROGRAM.app" "$native_arch" "$architecture" macOS
+            done
             ;;
           windows)
             flutter build windows --release "${args[@]}"
             if [[ "$PROGRAM" == pku_manager ]]; then
               choco install nsis --version=3.11 -y --no-progress
               MSYS_NO_PATHCONV=1 '/c/Program Files (x86)/NSIS/makensis.exe' "/DVERSION=$version" packaging/windows/installer.nsi
-              cp packaging/windows/pku-manager-setup.exe "../dist/$PROGRAM-windows.exe"
+              cp packaging/windows/pku-manager-setup.exe "../dist/$prefix-amd64-Windows.exe"
             else
-              7z a "../dist/$PROGRAM-windows.zip" ./build/windows/x64/runner/Release/*
+              7z a "../dist/$prefix-amd64-Windows.zip" ./build/windows/x64/runner/Release/*
             fi
             ;;
           ios)
             flutter build ios --release --no-codesign "${args[@]}"
-            ditto -c -k --keepParent build/ios/iphoneos/Runner.app "../dist/$PROGRAM-ios-unsigned.zip"
+            archive_apple_bundle build/ios/iphoneos/Runner.app arm64 arm64 iOS
             ;;
           ios-simulator)
-            flutter build ios --simulator "${args[@]}"
-            ditto -c -k --keepParent build/ios/iphonesimulator/Runner.app "../dist/$PROGRAM-ios-simulator.zip"
+            for architecture in amd64 arm64; do
+              case "$architecture" in
+                amd64) native_arch=x86_64 ;;
+                arm64) native_arch=arm64 ;;
+              esac
+              FLUTTER_XCODE_ARCHS="$native_arch" FLUTTER_XCODE_ONLY_ACTIVE_ARCH=NO \
+                flutter build ios --simulator "${args[@]}"
+              archive_apple_bundle build/ios/iphonesimulator/Runner.app "$native_arch" "$architecture" iOS_Simulator
+            done
             ;;
           *) echo "Unsupported platform: $PLATFORM" >&2; exit 1 ;;
         esac

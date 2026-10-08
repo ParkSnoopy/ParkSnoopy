@@ -36,6 +36,15 @@ runs:
         shopt -s nullglob
         assets=(release-assets/*)
         (( ${#assets[@]} > 0 ))
+        prefix="${RELEASE_TITLE//[[:space:]]/_}_v$RELEASE_VERSION"
+        for asset in "${assets[@]}"; do
+          test -f "$asset" && test -s "$asset" && ! test -L "$asset"
+          filename="${asset##*/}"
+          [[ "$filename" == "$prefix-"* ]]
+          suffix="${filename#"$prefix-"}"
+          [[ "$suffix" =~ ^(amd64|arm64)-(Windows\.(exe|zip)|Linux\.(tar\.gz|AppImage)|Linux_CLI\.(tar\.gz|zip)|Android\.apk|(iOS|iOS_Simulator|macOS)\.zip)$ ]]
+        done
+        asset_names="$(printf '%s\n' "${assets[@]##*/}" | jq -Rsc 'split("\n")[:-1] | sort')"
         releases="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
         old_tags="$(jq -r --arg legacy "$RELEASE_REPOSITORY" --arg prefix "$RELEASE_TITLE v" \
           '.[] | (.name // "") as $name | select($name == $legacy or ($name | startswith($prefix) and (ltrimstr($prefix) | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")))) | .tag_name' \
@@ -63,8 +72,8 @@ runs:
           --title "$title" --notes '' --draft=false --latest
         gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
           --json name,isDraft,body,assets | \
-          jq -e --arg name "$title" --argjson count "${#assets[@]}" \
-            '.name == $name and (.isDraft == false) and ((.body // "") == "") and (.assets | length == $count)'
+          jq -e --arg name "$title" --argjson names "$asset_names" \
+            '.name == $name and (.isDraft == false) and ((.body // "") == "") and (.assets | map(.name) | sort) == $names'
         remaining="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
         jq -e --arg legacy "$RELEASE_REPOSITORY" --arg prefix "$RELEASE_TITLE v" --arg tag "$tag" \
           '[.[] | (.name // "") as $name | select($name == $legacy or ($name | startswith($prefix) and (ltrimstr($prefix) | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")))) | .tag_name] == [$tag]' \

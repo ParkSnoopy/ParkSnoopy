@@ -96,6 +96,7 @@ jobs:
       - uses: ./.github/actions/flutter-build
         with:
           repository: Love
+          title: Love
           platform: ${{ matrix.platform }}
           revision: ${{ needs.prepare.outputs.revision }}
         env:

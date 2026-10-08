@@ -98,6 +98,7 @@ jobs:
       - uses: ./.github/actions/flutter-build
         with:
           repository: pku_manager
+          title: PKU Manager
           platform: ${{ matrix.platform }}
           revision: ${{ needs.prepare.outputs.revision }}
         env:

@@ -477,7 +477,8 @@ jobs:
           set -euo pipefail
           case "$PLATFORM" in
             linux)
-              wails3 task package
+              # Build only the portable bundle, not DEB/RPM/Arch packages.
+              wails3 task linux:create:bundle
               wails3 task cli:package
               ;;
             android) wails3 task android:package ARCH=arm64 ;;
@@ -491,35 +492,36 @@ jobs:
         shell: bash
         env:
           PLATFORM: ${{ matrix.platform }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          prefix="Snoo_Box_v$VERSION"
           mkdir -p dist
           case "$PLATFORM" in
             linux)
-              shopt -s nullglob
-              packages=(bin/snoo-box-linux-amd64.tar.gz bin/*.deb bin/*.rpm bin/*.pkg.tar.* bin/snoo-box-cli-linux-amd64.zip)
-              (( ${#packages[@]} == 5 ))
               test -s bin/snoo-box-linux-amd64.tar.gz
               tar -tzf bin/snoo-box-linux-amd64.tar.gz | grep -x 'snoo-box-linux-amd64/snoo-box' > /dev/null
               test -s bin/snoo-box-cli-linux-amd64.zip
-              cp "${packages[@]}" dist/
+              cp bin/snoo-box-linux-amd64.tar.gz "dist/$prefix-amd64-Linux.tar.gz"
+              cp bin/snoo-box-cli-linux-amd64.zip "dist/$prefix-amd64-Linux_CLI.zip"
               ;;
             android)
               test -s bin/snoo-box.apk
               "$ANDROID_BUILD_TOOLS/apksigner" verify --min-sdk-version 21 --verbose bin/snoo-box.apk
-              cp bin/snoo-box.apk dist/snoo-box-android-arm64.apk
+              cp bin/snoo-box.apk "dist/$prefix-arm64-Android.apk"
               ;;
             windows)
               test -s bin/snoo-box-amd64-installer.exe
-              cp bin/snoo-box-amd64-installer.exe dist/
+              cp bin/snoo-box-amd64-installer.exe "dist/$prefix-amd64-Windows.exe"
               ;;
             macos)
               test -d bin/snoo-box.app
-              ditto -c -k --sequesterRsrc --keepParent bin/snoo-box.app dist/snoo-box-macos-arm64.zip
+              ditto -c -k --sequesterRsrc --keepParent bin/snoo-box.app "dist/$prefix-arm64-macOS.zip"
               ;;
             ios)
               test -d bin/snoo-box.app
-              ditto -c -k --sequesterRsrc --keepParent bin/snoo-box.app dist/snoo-box-ios-simulator-arm64.zip
+              ditto -c -k --sequesterRsrc --keepParent bin/snoo-box.app "dist/$prefix-arm64-iOS_Simulator.zip"
               ;;
             *) exit 1 ;;
           esac

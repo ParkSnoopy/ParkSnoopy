@@ -94,6 +94,7 @@ jobs:
       - uses: ./.github/actions/flutter-build
         with:
           repository: snoopage_client
+          title: Snoopage Client
           platform: ${{ matrix.platform }}
           revision: ${{ needs.prepare.outputs.revision }}
         env:
