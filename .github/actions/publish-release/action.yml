@@ -14,7 +14,7 @@ inputs:
     description: Token with Contents and Workflows write access.
     required: true
   revision:
-    description: Full built source-repository SHA-1 used in the release tag name and annotation.
+    description: Full built source-repository SHA-1 used in the release tag name.
     required: true
 runs:
   using: composite
@@ -44,8 +44,6 @@ runs:
         tag="$project-${RELEASE_REVISION:0:7}"
         title="$RELEASE_TITLE v$RELEASE_VERSION"
         tag_message="$title"
-        tag_message+=$'\n\nSource revision: '
-        tag_message+="$RELEASE_REVISION"
         shopt -s nullglob
         assets=(release-assets/*)
         (( ${#assets[@]} > 0 ))
