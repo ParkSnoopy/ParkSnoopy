@@ -130,4 +130,5 @@ jobs:
           repository: pku_manager
           title: PKU Manager
           version: ${{ needs.prepare.outputs.version }}
+          revision: ${{ needs.prepare.outputs.revision }}
           token: ${{ secrets.RELEASE_TOKEN }}

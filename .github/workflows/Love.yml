@@ -128,4 +128,5 @@ jobs:
           repository: Love
           title: Love
           version: ${{ needs.prepare.outputs.version }}
+          revision: ${{ needs.prepare.outputs.revision }}
           token: ${{ secrets.RELEASE_TOKEN }}

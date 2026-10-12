@@ -623,4 +623,5 @@ jobs:
           repository: snoo-box
           title: Snoo Box
           version: ${{ needs.prepare.outputs.version }}
+          revision: ${{ needs.prepare.outputs.revision }}
           token: ${{ secrets.RELEASE_TOKEN }}

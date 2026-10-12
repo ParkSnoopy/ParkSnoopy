@@ -13,6 +13,9 @@ inputs:
   token:
     description: Token with Contents and Workflows write access.
     required: true
+  revision:
+    description: Full built source-repository SHA-1 used in the release tag name and annotation.
+    required: true
 runs:
   using: composite
   steps:
@@ -30,10 +33,19 @@ runs:
         RELEASE_REPOSITORY: ${{ inputs.repository }}
         RELEASE_TITLE: ${{ inputs.title }}
         RELEASE_VERSION: ${{ inputs.version }}
+        RELEASE_REVISION: ${{ inputs.revision }}
       run: |
         set -euo pipefail
         [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+        [[ "$RELEASE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+        project="${RELEASE_REPOSITORY,,}"
+        project="${project//_/-}"
+        [[ "$project" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]
+        tag="$project-${RELEASE_REVISION:0:7}"
         title="$RELEASE_TITLE v$RELEASE_VERSION"
+        tag_message="$title"
+        tag_message+=$'\n\nSource revision: '
+        tag_message+="$RELEASE_REVISION"
         shopt -s nullglob
         assets=(release-assets/*)
         (( ${#assets[@]} > 0 ))
@@ -50,24 +62,23 @@ runs:
         old_tags="$(jq -r --arg legacy "$RELEASE_REPOSITORY" --arg prefix "$RELEASE_TITLE v" \
           '.[] | (.name // "") as $name | select($name == $legacy or ($name | startswith($prefix) and (ltrimstr($prefix) | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")))) | .tag_name' \
           <<< "$releases")"
-        tag="$RELEASE_REPOSITORY-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
         if [[ -n "$old_tags" ]]; then
           while IFS= read -r old_tag; do
             gh release delete "$old_tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
           done <<< "$old_tags"
         fi
         tag_date="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-        tag_sha="$(jq -n --arg tag "$tag" --arg title "$title" \
+        tag_sha="$(jq -n --arg tag "$tag" --arg message "$tag_message" \
           --arg commit "$GITHUB_SHA" --arg date "$tag_date" \
-          '{tag: $tag, message: $title, object: $commit, type: "commit", tagger: {name: "github-actions[bot]", email: "41898282+github-actions[bot]@users.noreply.github.com", date: $date}}' | \
+          '{tag: $tag, message: $message, object: $commit, type: "commit", tagger: {name: "github-actions[bot]", email: "41898282+github-actions[bot]@users.noreply.github.com", date: $date}}' | \
           gh api --method POST "repos/$GITHUB_REPOSITORY/git/tags" --input - --jq .sha)"
         gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
           -f ref="refs/tags/$tag" -f sha="$tag_sha"
         gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" | \
           jq -e --arg sha "$tag_sha" '.object.type == "tag" and .object.sha == $sha'
         gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_sha" | \
-          jq -e --arg tag "$tag" --arg commit "$GITHUB_SHA" --arg date "$tag_date" \
-            '.tag == $tag and .object.type == "commit" and .object.sha == $commit and .tagger.date == $date'
+          jq -e --arg tag "$tag" --arg commit "$GITHUB_SHA" --arg date "$tag_date" --arg message "$tag_message" \
+            '.tag == $tag and .message == $message and .object.type == "commit" and .object.sha == $commit and .tagger.date == $date'
         gh release create "$tag" "${assets[@]}" \
           --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --verify-tag \
           --title "$title" --notes '' --draft=false --latest

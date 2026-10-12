@@ -126,4 +126,5 @@ jobs:
           repository: snoopage_client
           title: Snoopage Client
           version: ${{ needs.prepare.outputs.version }}
+          revision: ${{ needs.prepare.outputs.revision }}
           token: ${{ secrets.RELEASE_TOKEN }}

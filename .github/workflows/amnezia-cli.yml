@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.package.outputs.version }}
+      revision: ${{ steps.package.outputs.revision }}
     env:
       GOOS: linux
       GOARCH: amd64
@@ -50,6 +51,9 @@ jobs:
           set -euo pipefail
           cmake -S . -B build -G Ninja
           cmake --build build
+          revision="$(git rev-parse HEAD)"
+          [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
           version="$(build/dist/amn version)"
           version="${version##* }"
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
@@ -85,4 +89,5 @@ jobs:
           repository: amnezia-cli
           title: Amnezia CLI
           version: ${{ needs.build.outputs.version }}
+          revision: ${{ needs.build.outputs.revision }}
           token: ${{ secrets.RELEASE_TOKEN }}
