@@ -69,7 +69,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for engine in xray-core hysteria amneziawg-go; do
+          for engine in xray-core hysteria amneziawg-go trusttunnel-client trusttunnel; do
             directory="source/protocols/$engine"
             if [[ "$(git -C "$directory" rev-parse --is-shallow-repository)" == true ]]; then
               git -C "$directory" fetch --unshallow --tags
@@ -235,7 +235,7 @@ jobs:
                   "image": [os.environ["ImageOS"], os.environ["ImageVersion"]],
                   "source": capture("git", "-C", str(source), "rev-parse", "HEAD"),
                   "release": capture("git", "-C", str(source), "describe", "--tags", "--abbrev=0", "HEAD")
-                             if name in ("xray", "hysteria", "amneziawg") else None,
+                             if name in ("xray", "hysteria", "amneziawg", "trusttunnel_client", "trusttunnel_endpoint") else None,
                   "recipe": naive_recipe if name == "naive" else recipe, "toolchain": tools[toolchain],
                   "overlays": {path: digest(path) for path in overlays},
               }
