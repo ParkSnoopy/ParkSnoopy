@@ -50,10 +50,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GO_CACHE_TARGET: linux-engines
-
-      CCACHE_MAXSIZE: 1G
-      # Downloaded Chromium compilers have fresh mtimes on each runner.
-      CCACHE_COMPILERCHECK: content
     steps:
       - name: actions/checkout@v7 - Check Out Pinned Source
         uses: actions/checkout@v7
@@ -132,15 +128,13 @@ jobs:
           sudo apt-get update -o Dir::Etc::sourcelist='sources.list.d/ubuntu.sources' -o Dir::Etc::sourceparts='-' -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
           # Let libc++ select its matching LLVM unwinder; libunwind-dev conflicts with it.
           # Added wails3 build depdendency into LLVM installation depdendency install procedure
-          sudo apt-get install -y -o Dir::Cache::archives="$RUNNER_TEMP/snoo-box-apt-cache" -o APT::Keep-Downloaded-Packages=true -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 build-essential pkg-config clang clang-tools libc++-dev libc++abi-dev libgtk-4-dev libwebkitgtk-6.0-dev ccache
-          python -m pip install --upgrade 'conan>=2,<3' cmake ninja PyYAML
+          sudo apt-get install -y -o Dir::Cache::archives="$RUNNER_TEMP/snoo-box-apt-cache" -o APT::Keep-Downloaded-Packages=true -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 build-essential pkg-config clang clang-tools libc++-dev libc++abi-dev libgtk-4-dev libwebkitgtk-6.0-dev
+          python -m pip install --upgrade 'conan>=2,<3' cmake ninja
           rustup update stable nightly
           conan --version
           cmake --version
           ninja --version
           clang --version
-          ccache --version
-          echo "CCACHE_DIR=$RUNNER_TEMP/snoo-box-naive-ccache" >> "$GITHUB_ENV"
       - &install-wails
         name: bash - Install Wails CLI from Application Module
         working-directory: source/app
@@ -166,8 +160,6 @@ jobs:
           import json
           import os
           import subprocess
-          import sys
-          import yaml
           from pathlib import Path
 
           root = Path.cwd().parent
@@ -188,23 +180,6 @@ jobs:
               "engines/Taskfile.yml": digest("engines/Taskfile.yml"),
               "wails_cli": capture("go", "version", "-m", str(wails)).splitlines()[1:],
           }
-          taskfile = yaml.safe_load((root / "engines/Taskfile.yml").read_text())
-          def task_inputs(name):
-              task = taskfile["tasks"][name]
-              dependencies = [entry if isinstance(entry, str) else entry["task"]
-                              for entry in task.get("deps", [])]
-              dependencies += [entry["task"] for entry in task.get("cmds", [])
-                               if isinstance(entry, dict) and "task" in entry]
-              return {"definition": task, "dependencies": [task_inputs(name) for name in dependencies]}
-
-          # Retain global Task settings and the complete NaiveProxy task closure,
-          # not unrelated engine recipes. Chromium pins Clang/GN/PGO in its source;
-          # the system Rust installation is not part of this C/C++ build.
-          naive_recipe = {
-              "globals": {key: value for key, value in taskfile.items() if key != "tasks"},
-              "task": task_inputs("naiveproxy"),
-              "wails_cli": recipe["wails_cli"],
-          }
           tools = {
               "go": [capture("go", "version"), capture("go", "env", "GOAMD64", "GOEXPERIMENT", "GOFIPS140")],
               "cpp": [capture("clang", "--version"), capture("cmake", "--version"),
@@ -212,9 +187,6 @@ jobs:
                       capture("dpkg-query", "-W", "-f=${binary:Package}=${Version}\\n",
                               "build-essential", "clang", "clang-tools", "libc++-dev", "libc++abi-dev")],
               "rust": [capture("rustc", "+nightly", "-Vv"), capture("cargo", "+nightly", "--version")],
-              "chromium": [sys.version, capture("ninja", "--version"), capture("ccache", "--version"),
-                           capture("dpkg-query", "-W", "-f=${binary:Package}=${Version}\\n",
-                                   "build-essential", "libc6-dev")],
           }
           engines = (
               ("xray", "xray-core", "xray", "xray", "go", ("engines/xray-tls-certificates.patch",)),
@@ -223,9 +195,6 @@ jobs:
               ("trusttunnel_client", "trusttunnel-client", "trusttunnel", "trusttunnel_client", "cpp", ()),
               ("trusttunnel_endpoint", "trusttunnel", "trusttunnel-endpoint", "trusttunnel_endpoint", "rust",
                ("engines/trusttunnel-camouflage.patch",)),
-              ("naive", "naiveproxy", "naiveproxy", "naive", "chromium", ("engines/naiveproxy-static.patch",)),
-              ("naiveproxy_server", "naiveproxy-server", "naiveproxy-server", "naiveproxy-server", "go",
-               ("engines/naiveproxy-accounting.patch", "engines/naiveproxy-server/stats.go")),
           )
           plan = []
           for name, directory, task, binary, toolchain, overlays in engines:
@@ -234,9 +203,8 @@ jobs:
                   "schema": 1, "target": "linux/amd64", "engine": name,
                   "image": [os.environ["ImageOS"], os.environ["ImageVersion"]],
                   "source": capture("git", "-C", str(source), "rev-parse", "HEAD"),
-                  "release": capture("git", "-C", str(source), "describe", "--tags", "--abbrev=0", "HEAD")
-                             if name in ("xray", "hysteria", "amneziawg", "trusttunnel_client", "trusttunnel_endpoint") else None,
-                  "recipe": naive_recipe if name == "naive" else recipe, "toolchain": tools[toolchain],
+                  "release": capture("git", "-C", str(source), "describe", "--tags", "--abbrev=0", "HEAD"),
+                  "recipe": recipe, "toolchain": tools[toolchain],
                   "overlays": {path: digest(path) for path in overlays},
               }
               fingerprint = hashlib.sha256(json.dumps(inputs, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -280,34 +248,7 @@ jobs:
         with:
           path: ${{ runner.temp }}/snoo-box-engine-cache/trusttunnel_endpoint
           key: ${{ steps.engine_inputs.outputs.trusttunnel_endpoint }}
-      - name: actions/cache@v6 - Cache NaiveProxy Client Binary
-        uses: actions/cache@v6
-        id: cache_naive
-        with:
-          path: ${{ runner.temp }}/snoo-box-engine-cache/naive
-          key: ${{ steps.engine_inputs.outputs.naive }}
-      - name: actions/cache@v6 - Cache NaiveProxy Server Binary
-        uses: actions/cache@v6
-        id: cache_naiveproxy_server
-        with:
-          path: ${{ runner.temp }}/snoo-box-engine-cache/naiveproxy_server
-          key: ${{ steps.engine_inputs.outputs.naiveproxy_server }}
-      - name: actions/cache/restore@v6 - Restore NaiveProxy Compiler Cache
-        # Compiler entries validate source, headers, flags and compiler contents.
-        # Compatible prefix restores are safe here, unlike finished binaries.
-        # A unique snapshot key avoids freezing the first partial compilation.
-        # Keep this restore after the exact binary lookup to avoid needless I/O.
-        uses: actions/cache/restore@v6
-        id: naive_ccache
-        if: steps.cache_naive.outputs.cache-hit != 'true'
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: snoo-box-naive-ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.engine_inputs.outputs.naive }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            snoo-box-naive-ccache-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.engine_inputs.outputs.naive }}-
-            snoo-box-naive-ccache-v1-${{ runner.os }}-${{ runner.arch }}-
       - name: bash - Build or Reuse Linux Engines
-        id: engine_build
         working-directory: source/app
         shell: bash
         env:
@@ -318,8 +259,6 @@ jobs:
           AMNEZIAWG_CACHE_HIT: ${{ steps.cache_amneziawg.outputs.cache-hit }}
           TRUSTTUNNEL_CLIENT_CACHE_HIT: ${{ steps.cache_trusttunnel_client.outputs.cache-hit }}
           TRUSTTUNNEL_ENDPOINT_CACHE_HIT: ${{ steps.cache_trusttunnel_endpoint.outputs.cache-hit }}
-          NAIVE_CACHE_HIT: ${{ steps.cache_naive.outputs.cache-hit }}
-          NAIVEPROXY_SERVER_CACHE_HIT: ${{ steps.cache_naiveproxy_server.outputs.cache-hit }}
         run: |
           set -euo pipefail
           shopt -s nullglob dotglob
@@ -348,10 +287,6 @@ jobs:
                 ;;
               false|'')
                 echo "Building Linux engine: $binary"
-                if test "$name" = naive; then
-                  ccache --zero-stats
-                  echo 'naive_ccache_used=true' >> "$GITHUB_OUTPUT"
-                fi
                 wails3 task "native:$task" TARGET_OS=linux TARGET_ARCH=amd64
                 rm -rf "$cache_directory"
                 mkdir -p "$cache_directory"
@@ -368,17 +303,6 @@ jobs:
             fi
             install -m 0755 "$cache_directory/binary" "bin/engines/linux-amd64/$binary"
           done <<< "$specification"
-      - name: bash - Report NaiveProxy Compiler Cache Statistics
-        if: ${{ !cancelled() && steps.engine_build.outputs.naive_ccache_used == 'true' }}
-        shell: bash
-        run: ccache --show-stats
-      - name: actions/cache/save@v6 - Save NaiveProxy Compiler Cache
-        # Preserve successful compilations even when a later build command fails.
-        if: ${{ !cancelled() && steps.engine_build.outputs.naive_ccache_used == 'true' }}
-        uses: actions/cache/save@v6
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ${{ steps.naive_ccache.outputs.cache-primary-key }}
       - name: bash - Build and Record Linux Payloads
         working-directory: source/app
         env:
@@ -387,7 +311,7 @@ jobs:
           set -euo pipefail
           git rev-parse HEAD > bin/engines/linux-amd64.revision
           cd bin
-          engines=(engines/linux-amd64/{xray,hysteria,amneziawg-go,trusttunnel_client,trusttunnel_endpoint,naive,naiveproxy-server})
+          engines=(engines/linux-amd64/{xray,hysteria,amneziawg-go,trusttunnel_client,trusttunnel_endpoint})
           sha256sum --binary "${engines[@]}" > engines/linux-amd64.sha256
           (cd .. && wails3 task native:verify:prebuilt)
           tar -czf linux-engines.tar.gz "${engines[@]}" engines/linux-amd64.sha256 engines/linux-amd64.revision
