@@ -262,6 +262,8 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob dotglob
+          build_log=$(mktemp "$RUNNER_TEMP/snoo-box-engine-build.XXXXXX")
+          trap 'rm -f "$build_log"' EXIT
           validate_cache() {
             local directory=$1 expected_key=$2 entry payload_file
             local -a entries
@@ -287,7 +289,18 @@ jobs:
                 ;;
               false|'')
                 echo "Building Linux engine: $binary"
-                wails3 task "native:$task" TARGET_OS=linux TARGET_ARCH=amd64
+                for attempt in 1 2 3; do
+                  if wails3 task "native:$task" TARGET_OS=linux TARGET_ARCH=amd64 2>&1 | tee "$build_log"; then
+                    break
+                  else
+                    build_status=$?
+                  fi
+                  if [[ "$attempt" -eq 3 ]] || ! grep -Eq 'ConanException: Error downloading file .*too many (429|500|502|503|504) error responses' "$build_log"; then
+                    exit "$build_status"
+                  fi
+                  printf 'Transient source download failed; retrying %s (%s/3) in %ss\n' "$binary" "$((attempt + 1))" "$((attempt * 30))"
+                  sleep "$((attempt * 30))"
+                done
                 rm -rf "$cache_directory"
                 mkdir -p "$cache_directory"
                 install -m 0755 "bin/engines/linux-amd64/$binary" "$cache_directory/binary"
