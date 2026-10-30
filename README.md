@@ -3,5 +3,5 @@
 ![Top Langs in Repo](https://github-profile-summary-cards.vercel.app/api/cards/repos-per-language?username=ParkSnoopy&theme=zenburn)&nbsp;&nbsp;&nbsp;
 ![Top Langs in Commit](https://github-profile-summary-cards.vercel.app/api/cards/most-commit-language?username=ParkSnoopy&theme=zenburn)
 
-![GitHub Stats Card](https://ghstats.dev/api/card?username=ParkSnoopy&theme=ayu&border_radius=0&hide=week%2Ctrend%2Cavg%2Cactive_day%2Cfollowers%2Cstreak%2Crepos%2Cgrade)&nbsp;&nbsp;&nbsp;
+[![GitHub Stats](https://github-stats-extended.vercel.app/api?username=ParkSnoopy&show_icons=true&theme=nord)](https://github-stats-extended.vercel.app/api?username=ParkSnoopy&show_icons=true&theme=nord)&nbsp;&nbsp;&nbsp;
 <a href="https://github.com/ParkSnoopy/ParkSnoopy/releases"><img alt="Browse ParkSnoopy releases" src="assets/releases-card.svg" align="top"></a>
