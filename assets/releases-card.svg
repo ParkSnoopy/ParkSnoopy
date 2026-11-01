@@ -1,11 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="170" height="64" viewBox="0 0 170 64" role="img" aria-labelledby="title desc">
-  <title id="title">ParkSnoopy releases</title>
-  <desc id="desc">Browse releases on GitHub for ParkSnoopy/ParkSnoopy.</desc>
+  <title id="title">SnooBox</title>
+  <desc id="desc">Browse SnooBox releases on GitHub.</desc>
   <rect width="170" height="64" rx="4.5" fill="#111827"/>
   <g font-family="Segoe UI, Ubuntu, sans-serif">
-    <g transform="translate(20 20)" fill="none" stroke="#FF6FAE" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M12 0v16m-6-6 6 6 6-6M2 20v4h20v-4"/>
-    </g>
-    <text x="58" y="38" font-size="18" font-weight="600" fill="#FF6FAE">Releases</text>
+    <image x="20" y="20" width="24" height="24" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAMAAABg3Am1AAAAJFBMVEX///9cZWuJiYnZ2dm2trb7+/tfe49Xh6tysuJhmMF+xft/x/2eDA+9AAAAAXRSTlMAQObYZgAAAT1JREFUSMfFVlGixBAMNFiU+9/3aVc0Qm369fJnzWQmYqPGrAMwr8I6Z1/A4T81vFrkgl8UFTy4Tw8XlG4q1OlE7I0j5q54EByD2GPxU0679RVWu/6xeNJnh4+H35u6rBAxHbh9zRpnKuYmpFwjkq9l1wMEPJeSvr5kejueNY5McXDUbcBzM4g3nBvhIM+KQiJ44kbOng6EvsIKPkJWhCTL/EWI5iVhrFdDqCLQEUxcntKGwPrGKDvC1YsiOr0n9MuUM5SEXoqe0DS0hF64kkBHW3SEuLiwG0JY3u+ZQOMK1ILp7yAIfR1SZZQ03FcvJlabYU3kPKHhstI2k+zjqi0xp5eNsnOWcWMeTMtEWKcfrdo5ydPAF/uYM8gYIDs3kwj6PP/59n5FiKB6eH0naJ/2KnIS3nw8WLQX6z/iD+fAEPALRPW1AAAAAElFTkSuQmCC"/>
+    <text x="58" y="38" font-size="18" font-weight="600" fill="#FF6FAE">Get SnooBox</text>
   </g>
 </svg>
