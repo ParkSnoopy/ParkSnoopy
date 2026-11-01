@@ -65,7 +65,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for engine in xray-core hysteria amneziawg-go trusttunnel-client trusttunnel; do
+          for engine in xray-core hysteria trusttunnel-client trusttunnel; do
             directory="source/protocols/$engine"
             if [[ "$(git -C "$directory" rev-parse --is-shallow-repository)" == true ]]; then
               git -C "$directory" fetch --unshallow --tags
@@ -189,12 +189,10 @@ jobs:
               "rust": [capture("rustc", "+nightly", "-Vv"), capture("cargo", "+nightly", "--version")],
           }
           engines = (
-              ("xray", "xray-core", "xray", "xray", "go", ("engines/xray-tls-certificates.patch",)),
+              ("xray", "xray-core", "xray", "xray", "go", ()),
               ("hysteria", "hysteria", "hysteria", "hysteria", "go", ()),
-              ("amneziawg", "amneziawg-go", "amneziawg-go", "amneziawg-go", "go", ()),
               ("trusttunnel_client", "trusttunnel-client", "trusttunnel", "trusttunnel_client", "cpp", ()),
-              ("trusttunnel_endpoint", "trusttunnel", "trusttunnel-endpoint", "trusttunnel_endpoint", "rust",
-               ("engines/trusttunnel-camouflage.patch",)),
+              ("trusttunnel_endpoint", "trusttunnel", "trusttunnel-endpoint", "trusttunnel_endpoint", "rust", ()),
           )
           plan = []
           for name, directory, task, binary, toolchain, overlays in engines:
@@ -230,12 +228,6 @@ jobs:
         with:
           path: ${{ runner.temp }}/snoo-box-engine-cache/hysteria
           key: ${{ steps.engine_inputs.outputs.hysteria }}
-      - name: actions/cache@v6 - Cache AmneziaWG Binary
-        uses: actions/cache@v6
-        id: cache_amneziawg
-        with:
-          path: ${{ runner.temp }}/snoo-box-engine-cache/amneziawg
-          key: ${{ steps.engine_inputs.outputs.amneziawg }}
       - name: actions/cache@v6 - Cache TrustTunnel Client Binary
         uses: actions/cache@v6
         id: cache_trusttunnel_client
@@ -256,7 +248,6 @@ jobs:
           ENGINE_PLAN: ${{ steps.engine_inputs.outputs.plan }}
           XRAY_CACHE_HIT: ${{ steps.cache_xray.outputs.cache-hit }}
           HYSTERIA_CACHE_HIT: ${{ steps.cache_hysteria.outputs.cache-hit }}
-          AMNEZIAWG_CACHE_HIT: ${{ steps.cache_amneziawg.outputs.cache-hit }}
           TRUSTTUNNEL_CLIENT_CACHE_HIT: ${{ steps.cache_trusttunnel_client.outputs.cache-hit }}
           TRUSTTUNNEL_ENDPOINT_CACHE_HIT: ${{ steps.cache_trusttunnel_endpoint.outputs.cache-hit }}
         run: |
@@ -324,7 +315,7 @@ jobs:
           set -euo pipefail
           git rev-parse HEAD > bin/engines/linux-amd64.revision
           cd bin
-          engines=(engines/linux-amd64/{xray,hysteria,amneziawg-go,trusttunnel_client,trusttunnel_endpoint})
+          engines=(engines/linux-amd64/{xray,hysteria,trusttunnel_client,trusttunnel_endpoint})
           sha256sum --binary "${engines[@]}" > engines/linux-amd64.sha256
           (cd .. && wails3 task native:verify:prebuilt)
           tar -czf linux-engines.tar.gz "${engines[@]}" engines/linux-amd64.sha256 engines/linux-amd64.revision
