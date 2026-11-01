@@ -197,11 +197,14 @@ jobs:
           plan = []
           for name, directory, task, binary, toolchain, overlays in engines:
               source = root / "protocols" / directory
+              describe = ("--tags", "--always") if name == "trusttunnel_endpoint" else (
+                  ("--tags", "--exact-match") if name == "trusttunnel_client" else ("--tags", "--abbrev=0", "--always")
+              )
               inputs = {
                   "schema": 1, "target": "linux/amd64", "engine": name,
                   "image": [os.environ["ImageOS"], os.environ["ImageVersion"]],
                   "source": capture("git", "-C", str(source), "rev-parse", "HEAD"),
-                  "release": capture("git", "-C", str(source), "describe", "--tags", "--abbrev=0", "HEAD"),
+                  "release": capture("git", "-C", str(source), "describe", *describe, "HEAD"),
                   "recipe": recipe, "toolchain": tools[toolchain],
                   "overlays": {path: digest(path) for path in overlays},
               }
