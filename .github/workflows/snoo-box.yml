@@ -42,6 +42,10 @@ jobs:
             echo 'The source revision lacks shared Linux payload support; publish the snoo-box build-graph fix before dispatching this workflow.' >&2
             exit 1
           fi
+          if ! grep -Fq 'verify:overlay-hub:' source/app/build/Taskfile.yml; then
+            echo 'The source revision lacks shared overlay hub support; publish the snoo-box build-graph fix before dispatching this workflow.' >&2
+            exit 1
+          fi
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
@@ -272,12 +276,15 @@ jobs:
           RUSTUP_TOOLCHAIN: stable
         run: |
           set -euo pipefail
+          wails3 task common:build:overlay-hub
+          test -f bin/overlay-hub && test -s bin/overlay-hub && test -x bin/overlay-hub && ! test -L bin/overlay-hub
           git rev-parse HEAD > bin/engines/linux-amd64.revision
           cd bin
           engines=(engines/linux-amd64/{xray,hysteria})
           sha256sum --binary "${engines[@]}" > engines/linux-amd64.sha256
-          (cd .. && wails3 task native:verify:prebuilt)
-          tar -czf linux-engines.tar.gz "${engines[@]}" engines/linux-amd64.sha256 engines/linux-amd64.revision
+          sha256sum --binary overlay-hub > overlay-hub.sha256
+          (cd .. && wails3 task common:verify:overlay-hub)
+          tar -czf linux-engines.tar.gz "${engines[@]}" engines/linux-amd64.sha256 engines/linux-amd64.revision overlay-hub overlay-hub.sha256
       - name: actions/upload-artifact@v7 - Upload Linux Engine Payloads
         uses: actions/upload-artifact@v7
         with:
@@ -427,7 +434,7 @@ jobs:
       - name: bash - Verify Imported Engine Payloads
         working-directory: source/app
         shell: bash
-        run: wails3 task native:verify:prebuilt
+        run: wails3 task common:verify:overlay-hub
       - name: bash - Package Application
         working-directory: source/app
         shell: bash
