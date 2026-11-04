@@ -434,7 +434,17 @@ jobs:
       - name: bash - Verify Imported Engine Payloads
         working-directory: source/app
         shell: bash
-        run: wails3 task common:verify:overlay-hub
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          case "$PLATFORM" in
+            macos) namespace=darwin ;;
+            linux|android|windows|ios) namespace="$PLATFORM" ;;
+            *) exit 1 ;;
+          esac
+          # Exercise the same nested include used by frontend/binding builds.
+          wails3 task "$namespace:common:verify:overlay-hub"
       - name: bash - Package Application
         working-directory: source/app
         shell: bash
