@@ -136,7 +136,8 @@ jobs:
           tools_dir="$(mktemp -d)"
           trap 'rm -r "$tools_dir"' EXIT
           cp go.mod go.sum "$tools_dir/"
-          GOBIN="$(go env GOPATH)/bin" go -C "$tools_dir" install -mod=mod github.com/wailsapp/wails/v3/cmd/wails3
+          # Keep local replacements rooted in the app; isolate CLI-only edits.
+          GOBIN="$(go env GOPATH)/bin" go install -mod=mod -modfile="$tools_dir/go.mod" github.com/wailsapp/wails/v3/cmd/wails3
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: bash - Resolve Linux Engine Cache Keys
         id: engine_inputs
