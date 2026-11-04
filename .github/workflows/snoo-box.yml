@@ -65,7 +65,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for engine in xray-core hysteria trusttunnel-client trusttunnel; do
+          for engine in xray-core hysteria; do
             directory="source/protocols/$engine"
             if [[ "$(git -C "$directory" rev-parse --is-shallow-repository)" == true ]]; then
               git -C "$directory" fetch --unshallow --tags
@@ -126,15 +126,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/snoo-box-apt-cache"
           sudo apt-get update -o Dir::Etc::sourcelist='sources.list.d/ubuntu.sources' -o Dir::Etc::sourceparts='-' -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
-          # Let libc++ select its matching LLVM unwinder; libunwind-dev conflicts with it.
-          # Added wails3 build depdendency into LLVM installation depdendency install procedure
-          sudo apt-get install -y -o Dir::Cache::archives="$RUNNER_TEMP/snoo-box-apt-cache" -o APT::Keep-Downloaded-Packages=true -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 build-essential pkg-config clang clang-tools libc++-dev libc++abi-dev libgtk-4-dev libwebkitgtk-6.0-dev
-          python -m pip install --upgrade 'conan>=2,<3' cmake ninja
-          rustup update stable nightly
-          conan --version
-          cmake --version
-          ninja --version
-          clang --version
+          sudo apt-get install -y -o Dir::Cache::archives="$RUNNER_TEMP/snoo-box-apt-cache" -o APT::Keep-Downloaded-Packages=true -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
       - &install-wails
         name: bash - Install Wails CLI from Application Module
         working-directory: source/app
@@ -182,29 +174,19 @@ jobs:
           }
           tools = {
               "go": [capture("go", "version"), capture("go", "env", "GOAMD64", "GOEXPERIMENT", "GOFIPS140")],
-              "cpp": [capture("clang", "--version"), capture("cmake", "--version"),
-                      capture("ninja", "--version"), capture("conan", "--version"),
-                      capture("dpkg-query", "-W", "-f=${binary:Package}=${Version}\\n",
-                              "build-essential", "clang", "clang-tools", "libc++-dev", "libc++abi-dev")],
-              "rust": [capture("rustc", "+nightly", "-Vv"), capture("cargo", "+nightly", "--version")],
           }
           engines = (
               ("xray", "xray-core", "xray", "xray", "go", ()),
               ("hysteria", "hysteria", "hysteria", "hysteria", "go", ()),
-              ("trusttunnel_client", "trusttunnel-client", "trusttunnel", "trusttunnel_client", "cpp", ()),
-              ("trusttunnel_endpoint", "trusttunnel", "trusttunnel-endpoint", "trusttunnel_endpoint", "rust", ()),
           )
           plan = []
           for name, directory, task, binary, toolchain, overlays in engines:
               source = root / "protocols" / directory
-              describe = ("--tags", "--always") if name == "trusttunnel_endpoint" else (
-                  ("--tags", "--exact-match") if name == "trusttunnel_client" else ("--tags", "--abbrev=0", "--always")
-              )
               inputs = {
                   "schema": 1, "target": "linux/amd64", "engine": name,
                   "image": [os.environ["ImageOS"], os.environ["ImageVersion"]],
                   "source": capture("git", "-C", str(source), "rev-parse", "HEAD"),
-                  "release": capture("git", "-C", str(source), "describe", *describe, "HEAD"),
+                  "release": capture("git", "-C", str(source), "describe", "--tags", "--abbrev=0", "--always", "HEAD"),
                   "recipe": recipe, "toolchain": tools[toolchain],
                   "overlays": {path: digest(path) for path in overlays},
               }
@@ -231,18 +213,6 @@ jobs:
         with:
           path: ${{ runner.temp }}/snoo-box-engine-cache/hysteria
           key: ${{ steps.engine_inputs.outputs.hysteria }}
-      - name: actions/cache@v6 - Cache TrustTunnel Client Binary
-        uses: actions/cache@v6
-        id: cache_trusttunnel_client
-        with:
-          path: ${{ runner.temp }}/snoo-box-engine-cache/trusttunnel_client
-          key: ${{ steps.engine_inputs.outputs.trusttunnel_client }}
-      - name: actions/cache@v6 - Cache TrustTunnel Endpoint Binary
-        uses: actions/cache@v6
-        id: cache_trusttunnel_endpoint
-        with:
-          path: ${{ runner.temp }}/snoo-box-engine-cache/trusttunnel_endpoint
-          key: ${{ steps.engine_inputs.outputs.trusttunnel_endpoint }}
       - name: bash - Build or Reuse Linux Engines
         working-directory: source/app
         shell: bash
@@ -251,13 +221,9 @@ jobs:
           ENGINE_PLAN: ${{ steps.engine_inputs.outputs.plan }}
           XRAY_CACHE_HIT: ${{ steps.cache_xray.outputs.cache-hit }}
           HYSTERIA_CACHE_HIT: ${{ steps.cache_hysteria.outputs.cache-hit }}
-          TRUSTTUNNEL_CLIENT_CACHE_HIT: ${{ steps.cache_trusttunnel_client.outputs.cache-hit }}
-          TRUSTTUNNEL_ENDPOINT_CACHE_HIT: ${{ steps.cache_trusttunnel_endpoint.outputs.cache-hit }}
         run: |
           set -euo pipefail
           shopt -s nullglob dotglob
-          build_log=$(mktemp "$RUNNER_TEMP/snoo-box-engine-build.XXXXXX")
-          trap 'rm -f "$build_log"' EXIT
           validate_cache() {
             local directory=$1 expected_key=$2 entry payload_file
             local -a entries
@@ -283,18 +249,7 @@ jobs:
                 ;;
               false|'')
                 echo "Building Linux engine: $binary"
-                for attempt in 1 2 3; do
-                  if wails3 task "native:$task" TARGET_OS=linux TARGET_ARCH=amd64 2>&1 | tee "$build_log"; then
-                    break
-                  else
-                    build_status=$?
-                  fi
-                  if [[ "$attempt" -eq 3 ]] || ! grep -Eq 'ConanException: Error downloading file .*too many (429|500|502|503|504) error responses' "$build_log"; then
-                    exit "$build_status"
-                  fi
-                  printf 'Transient source download failed; retrying %s (%s/3) in %ss\n' "$binary" "$((attempt + 1))" "$((attempt * 30))"
-                  sleep "$((attempt * 30))"
-                done
+                wails3 task "native:$task" TARGET_OS=linux TARGET_ARCH=amd64
                 rm -rf "$cache_directory"
                 mkdir -p "$cache_directory"
                 install -m 0755 "bin/engines/linux-amd64/$binary" "$cache_directory/binary"
@@ -318,7 +273,7 @@ jobs:
           set -euo pipefail
           git rev-parse HEAD > bin/engines/linux-amd64.revision
           cd bin
-          engines=(engines/linux-amd64/{xray,hysteria,trusttunnel_client,trusttunnel_endpoint})
+          engines=(engines/linux-amd64/{xray,hysteria})
           sha256sum --binary "${engines[@]}" > engines/linux-amd64.sha256
           (cd .. && wails3 task native:verify:prebuilt)
           tar -czf linux-engines.tar.gz "${engines[@]}" engines/linux-amd64.sha256 engines/linux-amd64.revision
