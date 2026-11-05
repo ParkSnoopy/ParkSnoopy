@@ -8,6 +8,5 @@
 </p>
 
 <p align="center">
-  <a href="https://github-stats-extended.vercel.app/api?username=ParkSnoopy&amp;show_icons=true&amp;theme=nord"><img alt="GitHub Stats" src="https://github-stats-extended.vercel.app/api?username=ParkSnoopy&amp;show_icons=true&amp;theme=nord"></a>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://github.com/ParkSnoopy/ParkSnoopy/releases"><img alt="Browse SnooBox releases" src="assets/releases-card.svg" align="top"></a>
+  <a href="https://github-stats-extended.vercel.app/api?username=ParkSnoopy&amp;show_icons=true&amp;theme=nord"><img alt="GitHub Stats" src="https://github-stats-extended.vercel.app/api?username=ParkSnoopy&amp;show_icons=true&amp;theme=nord"></a>
 </p>
