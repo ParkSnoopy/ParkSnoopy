@@ -61,7 +61,6 @@ runs:
       uses: subosito/flutter-action@v2
       with:
         channel: stable
-        cache: true
     - name: bash - Build and Package
       working-directory: source
       shell: bash
