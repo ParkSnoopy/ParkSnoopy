@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   workflow_call:
   schedule:
-    - cron: '17 3 * * 0'
+    - cron: '17 3 * * *'
 
 permissions:
   contents: read
@@ -56,8 +56,6 @@ jobs:
   linux-engines:
     needs: prepare
     runs-on: ubuntu-latest
-    env:
-      GO_CACHE_TARGET: linux-engines
     steps:
       - name: actions/checkout@v7 - Check Out Pinned Source
         uses: actions/checkout@v7
@@ -84,57 +82,15 @@ jobs:
       - &setup-go
         name: actions/setup-go@v7 - Set Up Go
         uses: actions/setup-go@v7
-        id: setup_go
         with:
           go-version: stable
           check-latest: true
-          # Target-scoped caches avoid an immutable snapshot shared by the
-          # producer and both Linux platform jobs.
           cache: false
-      - &go-cache-paths
-        name: bash - Resolve Go Cache Directories
-        id: go_cache_paths
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
-          echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
-          echo "image=$ImageVersion" >> "$GITHUB_OUTPUT"
-      - &restore-go-cache
-        name: actions/cache@v6 - Restore Go Compiler and Module Cache
-        uses: actions/cache@v6
-        with:
-          path: |
-            ${{ steps.go_cache_paths.outputs.build }}
-            ${{ steps.go_cache_paths.outputs.modules }}
-          key: snoo-box-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.GO_CACHE_TARGET }}-${{ steps.setup_go.outputs.go-version }}-${{ hashFiles('source/**/go.mod', 'source/**/go.sum', 'source/**/go.work', 'source/**/go.work.sum') }}-${{ needs.prepare.outputs.revision }}
-          # Prefix reuse is safe for Go's content-addressed compilation cache,
-          # never for finished engine binaries. New source revisions save
-          # refreshed compiler outputs instead of freezing the first snapshot.
-          restore-keys: |
-            snoo-box-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.GO_CACHE_TARGET }}-${{ steps.setup_go.outputs.go-version }}-${{ hashFiles('source/**/go.mod', 'source/**/go.sum', 'source/**/go.work', 'source/**/go.work.sum') }}-
-            snoo-box-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.GO_CACHE_TARGET }}-${{ steps.setup_go.outputs.go-version }}-
-      - name: actions/setup-python@v7 - Set Up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: '3.x'
-      - &restore-apt-downloads
-        name: actions/cache@v6 - Restore Linux Package Downloads
-        if: runner.os == 'Linux'
-        uses: actions/cache@v6
-        with:
-          # Cache archives only, not root-owned APT locks or partial downloads.
-          # APT still resolves and verifies the current repository packages.
-          path: ${{ runner.temp }}/snoo-box-apt-cache/*.deb
-          key: snoo-box-apt-v1-${{ runner.arch }}-${{ steps.go_cache_paths.outputs.image }}-${{ env.GO_CACHE_TARGET }}-${{ needs.prepare.outputs.revision }}
-          restore-keys: |
-            snoo-box-apt-v1-${{ runner.arch }}-${{ steps.go_cache_paths.outputs.image }}-${{ env.GO_CACHE_TARGET }}-
       - name: bash - Install Linux Engine Toolchains
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/snoo-box-apt-cache"
           sudo apt-get update -o Dir::Etc::sourcelist='sources.list.d/ubuntu.sources' -o Dir::Etc::sourceparts='-' -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
-          sudo apt-get install -y -o Dir::Cache::archives="$RUNNER_TEMP/snoo-box-apt-cache" -o APT::Keep-Downloaded-Packages=true -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
+          sudo apt-get install -y -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
       - &install-wails
         name: bash - Install Wails CLI from Application Module
         working-directory: source/app
@@ -147,8 +103,7 @@ jobs:
           # Keep local replacements rooted in the app; isolate CLI-only edits.
           GOBIN="$(go env GOPATH)/bin" go install -mod=mod -modfile="$tools_dir/go.mod" github.com/wailsapp/wails/v3/cmd/wails3
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-      - name: bash - Resolve Linux Engine Cache Keys
-        id: engine_inputs
+      - name: bash - Build Linux Engines
         working-directory: source/app
         shell: bash
         env:
@@ -156,124 +111,11 @@ jobs:
         run: |
           set -euo pipefail
           wails3 task native:verify
-          python3 - <<'PY'
-          import hashlib
-          import json
-          import os
-          import subprocess
-          from pathlib import Path
-
-          root = Path.cwd().parent
-          def capture(*command):
-              return subprocess.check_output(command, text=True).strip()
-
-          def digest(relative):
-              path = root / relative
-              return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
-
-          # Only the matching engine's overlays enter its key. The shared recipe
-          # and actual tool versions invalidate binaries when build policy changes.
-          # App dependency churn does not change standalone engine binaries.
-          # Retain the actual Wails/Task CLI build identity, not the whole app
-          # module graph; the first metadata line contains only its install path.
-          wails = Path(capture("go", "env", "GOPATH")) / "bin" / "wails3"
-          recipe = {
-              "engines/Taskfile.yml": digest("engines/Taskfile.yml"),
-              "wails_cli": capture("go", "version", "-m", str(wails)).splitlines()[1:],
-          }
-          tools = {
-              "go": [capture("go", "version"), capture("go", "env", "GOAMD64", "GOEXPERIMENT", "GOFIPS140")],
-          }
-          engines = (
-              ("xray", "xray-core", "xray", "xray", "go", ()),
-              ("hysteria", "hysteria", "hysteria", "hysteria", "go", ()),
-          )
-          plan = []
-          for name, directory, task, binary, toolchain, overlays in engines:
-              source = root / "protocols" / directory
-              inputs = {
-                  "schema": 1, "target": "linux/amd64", "engine": name,
-                  "image": [os.environ["ImageOS"], os.environ["ImageVersion"]],
-                  "source": capture("git", "-C", str(source), "rev-parse", "HEAD"),
-                  "release": capture("git", "-C", str(source), "describe", "--tags", "--abbrev=0", "--always", "HEAD"),
-                  "recipe": recipe, "toolchain": tools[toolchain],
-                  "overlays": {path: digest(path) for path in overlays},
-              }
-              fingerprint = hashlib.sha256(json.dumps(inputs, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-              key = f"snoo-box-linux-amd64-v1-{name}-{fingerprint}"
-              plan.append({"name": name, "task": task, "binary": binary, "key": key})
-          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-              for engine in plan:
-                  print(f'{engine["name"]}={engine["key"]}', file=output)
-              print("plan=" + json.dumps(plan, separators=(",", ":")), file=output)
-          PY
-      # Exact keys only: never restore binaries from a different input revision.
-      # These directories contain one executable and its validation metadata,
-      # never compiler intermediates, exported sources or test keys.
-      - name: actions/cache@v6 - Cache Xray Binary
-        uses: actions/cache@v6
-        id: cache_xray
-        with:
-          path: ${{ runner.temp }}/snoo-box-engine-cache/xray
-          key: ${{ steps.engine_inputs.outputs.xray }}
-      - name: actions/cache@v6 - Cache Hysteria Binary
-        uses: actions/cache@v6
-        id: cache_hysteria
-        with:
-          path: ${{ runner.temp }}/snoo-box-engine-cache/hysteria
-          key: ${{ steps.engine_inputs.outputs.hysteria }}
-      - name: bash - Build or Reuse Linux Engines
-        working-directory: source/app
-        shell: bash
-        env:
-          RUSTUP_TOOLCHAIN: stable
-          ENGINE_PLAN: ${{ steps.engine_inputs.outputs.plan }}
-          XRAY_CACHE_HIT: ${{ steps.cache_xray.outputs.cache-hit }}
-          HYSTERIA_CACHE_HIT: ${{ steps.cache_hysteria.outputs.cache-hit }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob dotglob
-          validate_cache() {
-            local directory=$1 expected_key=$2 entry payload_file
-            local -a entries
-            test -d "$directory" && ! test -L "$directory" || return 1
-            entries=("$directory"/*)
-            test "${#entries[@]}" -eq 3 || return 1
-            for entry in binary key binary.sha256; do
-              payload_file="$directory/$entry"
-              test -f "$payload_file" && test -s "$payload_file" && ! test -L "$payload_file" || return 1
-            done
-            test -x "$directory/binary" || return 1
-            printf '%s\n' "$expected_key" | cmp - "$directory/key" || return 1
-            (cd "$directory" && sha256sum --binary binary | cmp - binary.sha256)
-          }
-          specification=$(python3 -c 'import json,os; [print(e["name"],e["task"],e["binary"],e["key"]) for e in json.loads(os.environ["ENGINE_PLAN"])]')
           mkdir -p bin/engines/linux-amd64
-          while read -r name task binary key; do
-            cache_directory="$RUNNER_TEMP/snoo-box-engine-cache/$name"
-            hit_variable="${name^^}_CACHE_HIT"
-            case "${!hit_variable}" in
-              true)
-                echo "Reusing Linux engine: $binary"
-                ;;
-              false|'')
-                echo "Building Linux engine: $binary"
-                wails3 task "native:$task" TARGET_OS=linux TARGET_ARCH=amd64
-                rm -rf "$cache_directory"
-                mkdir -p "$cache_directory"
-                install -m 0755 "bin/engines/linux-amd64/$binary" "$cache_directory/binary"
-                printf '%s\n' "$key" > "$cache_directory/key"
-                (cd "$cache_directory" && sha256sum --binary binary > binary.sha256)
-                ;;
-              *) echo "Invalid cache status for $binary" >&2; exit 1 ;;
-            esac
-            # Reject partial, corrupt or substituted entries before staging them.
-            if ! validate_cache "$cache_directory" "$key"; then
-              echo "Invalid cached Linux engine: $binary" >&2
-              exit 1
-            fi
-            install -m 0755 "$cache_directory/binary" "bin/engines/linux-amd64/$binary"
-          done <<< "$specification"
+          for task in xray hysteria; do
+            wails3 task "native:$task" TARGET_OS=linux TARGET_ARCH=amd64
+            test -x "bin/engines/linux-amd64/$task"
+          done
       - name: bash - Build and Record Linux Payloads
         working-directory: source/app
         env:
@@ -302,7 +144,6 @@ jobs:
     environment: snoo-box
     env:
       SNOO_PREBUILT_LINUX_ENGINES: 'true'
-      GO_CACHE_TARGET: ${{ matrix.platform }}
     strategy:
       fail-fast: false
       matrix:
@@ -325,8 +166,6 @@ jobs:
           persist-credentials: false
       - *restore-engine-tags
       - *setup-go
-      - *go-cache-paths
-      - *restore-go-cache
       - name: oven-sh/setup-bun@v2 - Set Up Bun
         uses: oven-sh/setup-bun@v2
       - name: actions/download-artifact@v8 - Download Linux Engine Payloads
@@ -341,17 +180,14 @@ jobs:
           set -euo pipefail
           mkdir -p source/app/bin
           tar -xzf payload/linux-engines.tar.gz -C source/app/bin
-      - *restore-apt-downloads
       - name: bash - Install Linux Dependencies
         if: matrix.platform == 'linux' || matrix.platform == 'android'
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/snoo-box-apt-cache"
           sudo apt-get update -o Dir::Etc::sourcelist='sources.list.d/ubuntu.sources' -o Dir::Etc::sourceparts='-' -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
-          sudo apt-get install -y -o Dir::Cache::archives="$RUNNER_TEMP/snoo-box-apt-cache" -o APT::Keep-Downloaded-Packages=true -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
+          sudo apt-get install -y -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
       - name: actions/setup-java@v6 - Set Up Java
         uses: actions/setup-java@v6
-        id: setup_java
         if: matrix.platform == 'android'
         with:
           distribution: temurin
@@ -363,18 +199,6 @@ jobs:
         if: matrix.platform == 'android'
         with:
           packages: ''
-      - name: actions/cache@v6 - Restore Android Dependency Downloads
-        if: matrix.platform == 'android'
-        uses: actions/cache@v6
-        with:
-          # Only dependency downloads: no signed APKs, keystores, daemon state
-          # or project build outputs belong in this cache.
-          path: |
-            ~/.gradle/caches/modules-2
-            ~/.gradle/wrapper
-          key: snoo-box-gradle-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup_java.outputs.version }}-${{ hashFiles('source/app/build/android/**/*.gradle', 'source/app/build/android/**/*.gradle.kts', 'source/app/build/android/**/gradle-wrapper.properties') }}
-          restore-keys: |
-            snoo-box-gradle-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup_java.outputs.version }}-
       - name: bash - Install Android SDK and Signing Key
         if: matrix.platform == 'android'
         env:
@@ -392,11 +216,13 @@ jobs:
           ndk="$(printf '%s\n' "$available" | python3 -c 'import re,sys; versions=set(re.findall(r"^\s*ndk;([0-9]+(?:\.[0-9]+)+)\s*\|",sys.stdin.read(),re.M)); print(max(versions,key=lambda v:tuple(map(int,v.split(".")))))')"
           tools="$(printf '%s\n' "$available" | python3 -c 'import re,sys; versions=set(re.findall(r"^\s*build-tools;([0-9]+(?:\.[0-9]+)+)\s*\|",sys.stdin.read(),re.M)); print(max(versions,key=lambda v:tuple(map(int,v.split(".")))))')"
           sdkmanager "ndk;$ndk" 'platforms;android-35' "build-tools;$tools"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ndk" >> "$GITHUB_ENV"
-          echo "ANDROID_BUILD_TOOLS=$ANDROID_HOME/build-tools/$tools" >> "$GITHUB_ENV"
-          echo "ANDROID_KEYSTORE_PASSWORD=$STORE_PASSWORD" >> "$GITHUB_ENV"
-          echo "ANDROID_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
-          echo "ANDROID_KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+          {
+            echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ndk"
+            echo "ANDROID_BUILD_TOOLS=$ANDROID_HOME/build-tools/$tools"
+            echo "ANDROID_KEYSTORE_PASSWORD=$STORE_PASSWORD"
+            echo "ANDROID_KEY_ALIAS=$KEY_ALIAS"
+            echo "ANDROID_KEY_PASSWORD=$KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
           echo "$KEY" | base64 --decode > "$RUNNER_TEMP/snoo-box.jks"
           keytool -list -keystore "$RUNNER_TEMP/snoo-box.jks" -storepass "$STORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
           echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/snoo-box.jks" >> "$GITHUB_ENV"
