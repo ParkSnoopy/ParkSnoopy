@@ -56,6 +56,8 @@ jobs:
   linux-engines:
     needs: prepare
     runs-on: ubuntu-latest
+    env:
+      GO_CACHE_TARGET: linux-engines
     steps:
       - name: actions/checkout@v7 - Check Out Pinned Source
         uses: actions/checkout@v7
@@ -82,15 +84,53 @@ jobs:
       - &setup-go
         name: actions/setup-go@v7 - Set Up Go
         uses: actions/setup-go@v7
+        id: setup_go
         with:
           go-version: stable
           check-latest: true
           cache: false
+      - &go-cache-paths
+        name: bash - Resolve Go Cache Directories
+        id: go_cache_paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "build=$(go env GOCACHE)"
+            echo "modules=$(go env GOMODCACHE)"
+            echo "image=$ImageVersion"
+          } >> "$GITHUB_OUTPUT"
+      - &restore-go-cache
+        name: actions/cache@v6 - Restore Go Compiler and Module Cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ steps.go_cache_paths.outputs.build }}
+            ${{ steps.go_cache_paths.outputs.modules }}
+          key: snoo-box-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.GO_CACHE_TARGET }}-${{ steps.setup_go.outputs.go-version }}-${{ hashFiles('source/**/go.mod', 'source/**/go.sum', 'source/**/go.work', 'source/**/go.work.sum') }}-${{ needs.prepare.outputs.revision }}
+          # Prefix reuse is safe for Go's content-addressed compilation cache,
+          # never for finished engine binaries. New source revisions save
+          # refreshed compiler outputs instead of freezing the first snapshot.
+          restore-keys: |
+            snoo-box-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.GO_CACHE_TARGET }}-${{ steps.setup_go.outputs.go-version }}-${{ hashFiles('source/**/go.mod', 'source/**/go.sum', 'source/**/go.work', 'source/**/go.work.sum') }}-
+            snoo-box-go-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.GO_CACHE_TARGET }}-${{ steps.setup_go.outputs.go-version }}-
+      - &restore-apt-downloads
+        name: actions/cache@v6 - Restore Linux Package Downloads
+        if: runner.os == 'Linux'
+        uses: actions/cache@v6
+        with:
+          # Cache archives only, not root-owned APT locks or partial downloads.
+          # APT still resolves and verifies the current repository packages.
+          path: ${{ runner.temp }}/snoo-box-apt-cache/*.deb
+          key: snoo-box-apt-v1-${{ runner.arch }}-${{ steps.go_cache_paths.outputs.image }}-${{ env.GO_CACHE_TARGET }}-${{ needs.prepare.outputs.revision }}
+          restore-keys: |
+            snoo-box-apt-v1-${{ runner.arch }}-${{ steps.go_cache_paths.outputs.image }}-${{ env.GO_CACHE_TARGET }}-
       - name: bash - Install Linux Engine Toolchains
         run: |
           set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/snoo-box-apt-cache"
           sudo apt-get update -o Dir::Etc::sourcelist='sources.list.d/ubuntu.sources' -o Dir::Etc::sourceparts='-' -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
-          sudo apt-get install -y -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
+          sudo apt-get install -y -o Dir::Cache::archives="$RUNNER_TEMP/snoo-box-apt-cache" -o APT::Keep-Downloaded-Packages=true -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
       - &install-wails
         name: bash - Install Wails CLI from Application Module
         working-directory: source/app
@@ -144,6 +184,7 @@ jobs:
     environment: snoo-box
     env:
       SNOO_PREBUILT_LINUX_ENGINES: 'true'
+      GO_CACHE_TARGET: ${{ matrix.platform }}
     strategy:
       fail-fast: false
       matrix:
@@ -166,6 +207,8 @@ jobs:
           persist-credentials: false
       - *restore-engine-tags
       - *setup-go
+      - *go-cache-paths
+      - *restore-go-cache
       - name: oven-sh/setup-bun@v2 - Set Up Bun
         uses: oven-sh/setup-bun@v2
       - name: actions/download-artifact@v8 - Download Linux Engine Payloads
@@ -180,12 +223,14 @@ jobs:
           set -euo pipefail
           mkdir -p source/app/bin
           tar -xzf payload/linux-engines.tar.gz -C source/app/bin
+      - *restore-apt-downloads
       - name: bash - Install Linux Dependencies
         if: matrix.platform == 'linux' || matrix.platform == 'android'
         run: |
           set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/snoo-box-apt-cache"
           sudo apt-get update -o Dir::Etc::sourcelist='sources.list.d/ubuntu.sources' -o Dir::Etc::sourceparts='-' -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
-          sudo apt-get install -y -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
+          sudo apt-get install -y -o Dir::Cache::archives="$RUNNER_TEMP/snoo-box-apt-cache" -o APT::Keep-Downloaded-Packages=true -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
       - name: actions/setup-java@v6 - Set Up Java
         uses: actions/setup-java@v6
         if: matrix.platform == 'android'
