@@ -46,6 +46,10 @@ jobs:
             echo 'The source revision lacks shared overlay hub support; publish the snoo-box build-graph fix before dispatching this workflow.' >&2
             exit 1
           fi
+          if [[ "$(grep -Fc -- '-ldflags="-checklinkname=0 {{.REVISION_LDFLAGS}}' source/app/build/android/Taskfile.yml)" != 2 ]]; then
+            echo 'The source revision lacks Android shared-library link compatibility; publish the snoo-box Android build fix before dispatching this workflow.' >&2
+            exit 1
+          fi
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
