@@ -59,8 +59,10 @@ jobs:
             -o Dir::Etc::sourceparts='-'
           sudo apt-get install -y libxml2-utils zip
           python3 tools/compile_corpus.py
+          test -f assets/fonts/NotoSans_EN-Regular.ttf
+          test -f assets/fonts/NotoSerif_KR-Regular.otf
           zip -q data.zip assets/data.zip assets/data/manifest.json \
-            assets/fonts/NotoSansCJK.ttc assets/fonts/NotoSerifCJK.ttc
+            assets/fonts/Noto*
       - name: actions/upload-artifact@v7 - Upload Build Assets
         uses: actions/upload-artifact@v7
         with:
