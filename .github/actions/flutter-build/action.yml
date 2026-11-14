@@ -13,6 +13,12 @@ inputs:
   revision:
     description: Exact source commit.
     required: true
+  assets-directory:
+    description: >-
+      Source subdirectory that receives the data artifact as it is. When empty,
+      the artifact holds a data.zip that is unpacked into the source root.
+    required: false
+    default: ''
 runs:
   using: composite
   steps:
@@ -20,9 +26,10 @@ runs:
       uses: actions/download-artifact@v8
       with:
         name: ${{ inputs.repository }}-data
-        path: source
+        path: ${{ inputs.assets-directory == '' && 'source' || format('source/{0}', inputs.assets-directory) }}
         github-token: ${{ env.GH_TOKEN }}
     - name: bash - Restore Build Assets
+      if: inputs.assets-directory == ''
       working-directory: source
       shell: bash
       run: unzip -q -o data.zip
