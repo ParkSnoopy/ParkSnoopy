@@ -359,16 +359,18 @@ jobs:
       - name: pwsh - Sign and Verify Windows Installer
         if: matrix.platform == 'windows'
         shell: pwsh
+        timeout-minutes: 3
         env:
           WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
           WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PFX_PASSWORD }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $directory = Join-Path $env:RUNNER_TEMP ([guid]::NewGuid().ToString())
+          $directory = Join-Path $env:RUNNER_TEMP 'snoo-box-windows-signing'
           $null = New-Item -ItemType Directory -Path $directory
           $pfx = Join-Path $directory 'signing.pfx'
           $added = @()
           try {
+            Write-Host 'Loading and validating the signing certificate.'
             [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CODESIGN_PFX_BASE64))
             $password = ConvertTo-SecureString $env:WINDOWS_CODESIGN_PFX_PASSWORD -AsPlainText -Force
             $certificate = Get-PfxData -FilePath $pfx -Password $password
@@ -386,21 +388,26 @@ jobs:
               throw 'Certificate does not permit code signing.'
             }
             $thumbprint = $leaf.Thumbprint
-            # Explicit leaf trust on this disposable runner only; no issuing CA is supplied.
-            # Do not modify machine-wide stores or ship private signing material.
+            # Approved temporary public-certificate trust on this disposable runner.
+            # CurrentUser\Root can display a hidden confirmation dialog in CI.
+            Write-Host 'Installing temporary machine trust for the supplied public certificate.'
             foreach ($storeName in @('Root', 'TrustedPeople')) {
-              $store = [Security.Cryptography.X509Certificates.X509Store]::new($storeName, 'CurrentUser')
+              $store = [Security.Cryptography.X509Certificates.X509Store]::new($storeName, 'LocalMachine')
               try {
                 $store.Open('ReadWrite')
                 if ($store.Certificates.Find('FindByThumbprint', $thumbprint, $false).Count -eq 0) {
+                  $added += "Cert:\LocalMachine\$storeName\$thumbprint"
+                  # Record ownership before mutation so cancellation cleanup can recover.
+                  ConvertTo-Json -InputObject $added | Set-Content -LiteralPath (Join-Path $directory 'added.json')
                   $store.Add($leaf)
-                  $added += "Cert:\CurrentUser\$storeName\$thumbprint"
                 }
               } finally { $store.Close() }
             }
             $installer = (Resolve-Path 'source/app/bin/snoo-box-amd64-installer.exe').Path
+            Write-Host 'Signing the installer and requesting a SHA-256 timestamp.'
             & $env:WINDOWS_SIGNTOOL sign /f $pfx /p $env:WINDOWS_CODESIGN_PFX_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $installer
             if ($LASTEXITCODE -ne 0) { throw "Installer signing failed: $LASTEXITCODE" }
+            Write-Host 'Verifying installer integrity, signer identity, and timestamp.'
             & $env:WINDOWS_SIGNTOOL verify /pa /all /v $installer
             if ($LASTEXITCODE -ne 0) { throw "Installer signature verification failed: $LASTEXITCODE" }
             $signature = Get-AuthenticodeSignature -LiteralPath $installer
@@ -408,10 +415,31 @@ jobs:
                 !$signature.TimeStamperCertificate) {
               throw 'Installer must have a valid signature from the supplied certificate and a timestamp.'
             }
+            Write-Host 'Installer signature and timestamp verified.'
           } finally {
-            foreach ($entry in $added) { Remove-Item -LiteralPath $entry -Force }
+            Write-Host 'Removing temporary signing material and certificate trust.'
+            foreach ($entry in $added) {
+              if (Test-Path -LiteralPath $entry) { Remove-Item -LiteralPath $entry -Force }
+            }
             Remove-Item -LiteralPath $directory -Recurse -Force
           }
+      - name: pwsh - Clean Up Interrupted Windows Signing
+        if: ${{ always() && matrix.platform == 'windows' }}
+        shell: pwsh
+        timeout-minutes: 1
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $directory = Join-Path $env:RUNNER_TEMP 'snoo-box-windows-signing'
+          $record = Join-Path $directory 'added.json'
+          if (Test-Path -LiteralPath $record) {
+            foreach ($entry in @(Get-Content -LiteralPath $record -Raw | ConvertFrom-Json)) {
+              if ($entry -notmatch '^Cert:\\LocalMachine\\(Root|TrustedPeople)\\[0-9A-F]{40}$') {
+                throw 'Invalid temporary certificate cleanup record.'
+              }
+              if (Test-Path -LiteralPath $entry) { Remove-Item -LiteralPath $entry -Force }
+            }
+          }
+          if (Test-Path -LiteralPath $directory) { Remove-Item -LiteralPath $directory -Recurse -Force }
       - name: bash - Stage Release Packages
         working-directory: source/app
         shell: bash
