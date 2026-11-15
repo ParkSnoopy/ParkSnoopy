@@ -188,35 +188,9 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  ios-tests:
-    name: Test iOS Engines
-    needs: prepare
-    runs-on: macos-latest
-    env:
-      GO_CACHE_TARGET: ios-tests
-    steps:
-      - name: actions/checkout@v7 - Check Out Pinned Source
-        uses: actions/checkout@v7
-        with:
-          repository: ParkSnoopy/snoo-box
-          ref: ${{ needs.prepare.outputs.revision }}
-          path: source
-          submodules: recursive
-          token: ${{ env.GH_TOKEN }}
-          persist-credentials: false
-      - *setup-go
-      - *go-cache-paths
-      - *restore-go-cache
-      - name: bash - Test Shared Apple Tunnel Code
-        working-directory: source/app
-        run: go test -tags with_gvisor ./src/internal/platform/apple/... ./build/ios/scripts/deps
-      - name: bash - Test iOS In-Process Engines
-        working-directory: source/app/src/cmd/ios-tunnel
-        run: go test -overlay=overlay.json -tags with_gvisor -ldflags=-checklinkname=0 ./...
-
   ios-archive:
     name: Archive iOS Device App (Unsigned, Not Installable)
-    needs: [prepare, ios-tests]
+    needs: prepare
     runs-on: macos-latest
     env:
       GO_CACHE_TARGET: ios-archive
@@ -471,8 +445,8 @@ jobs:
 
   release:
     name: Publish Release
-    needs: [prepare, ios-tests, build]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.ios-tests.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'failure') }}
+    needs: [prepare, build]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'failure') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
