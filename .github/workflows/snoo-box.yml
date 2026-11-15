@@ -104,6 +104,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if test "$GO_CACHE_TARGET" = ios; then
+            # Match the source-local caches used by the Xcode Go archive script.
+            export GOCACHE="$GITHUB_WORKSPACE/source/app/bin/.local/go-build"
+            export GOMODCACHE="$GITHUB_WORKSPACE/source/app/bin/.local/go-mod"
+            printf 'GOCACHE=%s\nGOMODCACHE=%s\n' "$GOCACHE" "$GOMODCACHE" >> "$GITHUB_ENV"
+          fi
           {
             echo "build=$(go env GOCACHE)"
             echo "modules=$(go env GOMODCACHE)"
@@ -188,73 +194,6 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  ios-archive:
-    name: Archive iOS Device App (Unsigned, Not Installable)
-    needs: prepare
-    runs-on: macos-latest
-    env:
-      GO_CACHE_TARGET: ios-archive
-      # Match the source-local caches used by the Xcode Go archive script.
-      GOCACHE: ${{ github.workspace }}/source/app/bin/.local/go-build
-      GOMODCACHE: ${{ github.workspace }}/source/app/bin/.local/go-mod
-    steps:
-      - name: actions/checkout@v7 - Check Out Pinned Source
-        uses: actions/checkout@v7
-        with:
-          repository: ParkSnoopy/snoo-box
-          ref: ${{ needs.prepare.outputs.revision }}
-          path: source
-          submodules: recursive
-          token: ${{ env.GH_TOKEN }}
-          persist-credentials: false
-      - *restore-engine-tags
-      - *setup-go
-      - *go-cache-paths
-      - *restore-go-cache
-      - name: oven-sh/setup-bun@v2 - Set Up Bun
-        uses: oven-sh/setup-bun@v2
-      - *install-wails
-      - name: bash - Report iOS Toolchain
-        run: |
-          set -euo pipefail
-          uname -m
-          xcodebuild -version
-          xcrun --sdk iphoneos --show-sdk-version
-          go version
-          bun --version
-          cargo --version
-      - name: bash - Build Unsigned iOS Device Archive
-        # The root Taskfile owns the ios namespace and app working directory.
-        working-directory: source
-        env:
-          RUSTUP_TOOLCHAIN: stable
-        run: |
-          set -euo pipefail
-          wails3 task ios:archive
-      - name: bash - Compress Unsigned iOS Archive
-        working-directory: source/app
-        run: |
-          set -euo pipefail
-          archive=bin/snoo-box-ios.xcarchive
-          test -s "$archive/Info.plist"
-          app="$archive/Products/Applications/Snoo Box.app"
-          executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")
-          test -x "$app/$executable"
-          extension="$app/PlugIns/SnooBoxTunnel.appex"
-          executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$extension/Info.plist")
-          test -x "$extension/$executable"
-          # Preserve executable permissions and bundle metadata inside the CI artifact.
-          ditto -c -k --sequesterRsrc --keepParent "$archive" bin/snoo-box-ios-unsigned.xcarchive.zip
-          echo 'Unsigned iOS device xcarchive: compile artifact only, not installable. No signing keys or provisioning profiles used.' >> "$GITHUB_STEP_SUMMARY"
-      - name: actions/upload-artifact@v7 - Upload Unsigned iOS Archive (Not Installable)
-        uses: actions/upload-artifact@v7
-        with:
-          name: snoo-box-ios-unsigned-not-installable
-          path: source/app/bin/snoo-box-ios-unsigned.xcarchive.zip
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 7
-
   build:
     name: Build ${{ matrix.title }}
     needs: [prepare, linux-engines]
@@ -270,6 +209,7 @@ jobs:
           - {platform: android, title: Android, os: ubuntu-latest}
           - {platform: windows, title: Windows, os: windows-latest}
           - {platform: macos, title: macOS, os: macos-latest}
+          - {platform: ios, title: iOS, os: macos-latest}
     runs-on: ${{ matrix.os }}
     steps:
       - name: actions/checkout@v7 - Check Out Pinned Source
@@ -287,6 +227,16 @@ jobs:
       - *restore-go-cache
       - name: oven-sh/setup-bun@v2 - Set Up Bun
         uses: oven-sh/setup-bun@v2
+      - name: bash - Report iOS Toolchain
+        if: matrix.platform == 'ios'
+        run: |
+          set -euo pipefail
+          uname -m
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          go version
+          bun --version
+          cargo --version
       - name: bash - Import macOS Signing Secrets
         if: matrix.platform == 'macos'
         env:
@@ -401,7 +351,7 @@ jobs:
           set -euo pipefail
           case "$PLATFORM" in
             macos) namespace=darwin ;;
-            linux|android|windows) namespace="$PLATFORM" ;;
+            linux|android|windows|ios) namespace="$PLATFORM" ;;
             *) exit 1 ;;
           esac
           # Exercise the same nested include used by frontend/binding builds.

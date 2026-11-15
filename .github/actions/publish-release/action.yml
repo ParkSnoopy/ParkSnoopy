@@ -55,7 +55,7 @@ runs:
           filename="${asset##*/}"
           [[ "$filename" == "$prefix-"* ]]
           suffix="${filename#"$prefix-"}"
-          [[ "$suffix" =~ ^(amd64|arm64)-(Windows\.(exe|zip)|Linux\.(tar\.gz|AppImage)|Linux_CLI\.(tar\.gz|zip)|Android\.apk|(iOS|iOS_Simulator|macOS)\.zip)$ ]]
+          [[ "$suffix" =~ ^(amd64|arm64)-(Windows\.(exe|zip)|Linux\.(tar\.gz|AppImage)|Linux_CLI\.(tar\.gz|zip)|Android\.apk|iOS\.xcarchive\.zip|(iOS|iOS_Simulator|macOS)\.zip)$ ]]
         done
         asset_names="$(printf '%s\n' "${assets[@]##*/}" | jq -Rsc 'split("\n")[:-1] | sort')"
         releases="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
