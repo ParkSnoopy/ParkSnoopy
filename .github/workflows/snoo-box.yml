@@ -179,6 +179,31 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  ios-tests:
+    needs: prepare
+    runs-on: macos-latest
+    env:
+      GO_CACHE_TARGET: ios-tests
+    steps:
+      - name: actions/checkout@v7 - Check Out Pinned Source
+        uses: actions/checkout@v7
+        with:
+          repository: ParkSnoopy/snoo-box
+          ref: ${{ needs.prepare.outputs.revision }}
+          path: source
+          submodules: recursive
+          token: ${{ env.GH_TOKEN }}
+          persist-credentials: false
+      - *setup-go
+      - *go-cache-paths
+      - *restore-go-cache
+      - name: bash - Test Shared Apple Tunnel Code
+        working-directory: source/app
+        run: go test -tags with_gvisor ./src/internal/platform/apple/... ./build/ios/scripts/deps
+      - name: bash - Test iOS In-Process Engines
+        working-directory: source/app/src/cmd/ios-tunnel
+        run: go test -tags with_gvisor -ldflags=-checklinkname=0 ./...
+
   build:
     needs: [prepare, linux-engines]
     environment: snoo-box
@@ -193,7 +218,6 @@ jobs:
           - {platform: android, os: ubuntu-latest}
           - {platform: windows, os: windows-latest}
           - {platform: macos, os: macos-latest}
-          - {platform: ios, os: macos-latest}
     runs-on: ${{ matrix.os }}
     steps:
       - name: actions/checkout@v7 - Check Out Pinned Source
@@ -211,6 +235,63 @@ jobs:
       - *restore-go-cache
       - name: oven-sh/setup-bun@v2 - Set Up Bun
         uses: oven-sh/setup-bun@v2
+      - name: bash - Import macOS Signing Secrets
+        if: matrix.platform == 'macos'
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_APP_PROFILE_BASE64: ${{ secrets.APPLE_APP_PROFILE_BASE64 }}
+          APPLE_TUNNEL_PROFILE_BASE64: ${{ secrets.APPLE_TUNNEL_PROFILE_BASE64 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_SIGN_IDENTITY: ${{ secrets.APPLE_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          set -euo pipefail
+          : "${APPLE_CERTIFICATE_P12_BASE64:?Set APPLE_CERTIFICATE_P12_BASE64 in snoo-box}"
+          : "${APPLE_CERTIFICATE_PASSWORD:?Set APPLE_CERTIFICATE_PASSWORD in snoo-box}"
+          : "${APPLE_APP_PROFILE_BASE64:?Set APPLE_APP_PROFILE_BASE64 in snoo-box}"
+          : "${APPLE_TUNNEL_PROFILE_BASE64:?Set APPLE_TUNNEL_PROFILE_BASE64 in snoo-box}"
+          : "${APPLE_TEAM_ID:?Set APPLE_TEAM_ID in snoo-box}"
+          : "${APPLE_SIGN_IDENTITY:?Set APPLE_SIGN_IDENTITY in snoo-box}"
+          : "${APPLE_ID:?Set APPLE_ID in snoo-box}"
+          : "${APPLE_APP_SPECIFIC_PASSWORD:?Set APPLE_APP_SPECIFIC_PASSWORD in snoo-box}"
+          [[ "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]]
+          [[ "$APPLE_SIGN_IDENTITY" == 'Developer ID Application: '* ]]
+          [[ "$APPLE_SIGN_IDENTITY" != *$'\n'* && "$APPLE_SIGN_IDENTITY" != *$'\r'* ]]
+          umask 077
+          directory="$RUNNER_TEMP/snoo-box-macos-signing"
+          mkdir "$directory"
+          printf '%s' "$APPLE_CERTIFICATE_P12_BASE64" | base64 --decode > "$directory/certificate.p12"
+          printf '%s' "$APPLE_APP_PROFILE_BASE64" | base64 --decode > "$directory/app.provisionprofile"
+          printf '%s' "$APPLE_TUNNEL_PROFILE_BASE64" | base64 --decode > "$directory/tunnel.provisionprofile"
+          python3 - "$directory/keychains.json" <<'PY'
+          import json, shlex, subprocess, sys
+          state = {name: shlex.split(subprocess.check_output(["security", command, "-d", "user"], text=True))
+                   for name, command in [("default", "default-keychain"), ("search", "list-keychains")]}
+          with open(sys.argv[1], "w") as output:
+              json.dump(state, output)
+          PY
+          keychain="$directory/signing.keychain-db"
+          password="$(openssl rand -hex 32)"
+          echo "::add-mask::$password"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$directory/certificate.p12" -P "$APPLE_CERTIFICATE_PASSWORD" -t cert -f pkcs12 -k "$keychain" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
+          security find-identity -v -p codesigning "$keychain" | grep -F -- "\"$APPLE_SIGN_IDENTITY\"" >/dev/null
+          security list-keychains -d user -s "$keychain" /Library/Keychains/System.keychain
+          security default-keychain -d user -s "$keychain"
+          xcrun notarytool store-credentials snoo-box-ci --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --keychain "$keychain" >/dev/null
+          rm -f "$directory/certificate.p12"
+          {
+            echo "APPLE_TEAM_ID=$APPLE_TEAM_ID"
+            echo "APPLE_SIGN_IDENTITY=$APPLE_SIGN_IDENTITY"
+            echo "APPLE_APP_PROFILE=$directory/app.provisionprofile"
+            echo "APPLE_TUNNEL_PROFILE=$directory/tunnel.provisionprofile"
+            echo 'APPLE_NOTARY_PROFILE=snoo-box-ci'
+          } >> "$GITHUB_ENV"
       - name: actions/download-artifact@v8 - Download Linux Engine Payloads
         uses: actions/download-artifact@v8
         with:
@@ -332,7 +413,7 @@ jobs:
           set -euo pipefail
           case "$PLATFORM" in
             macos) namespace=darwin ;;
-            linux|android|windows|ios) namespace="$PLATFORM" ;;
+            linux|android|windows) namespace="$PLATFORM" ;;
             *) exit 1 ;;
           esac
           # Exercise the same nested include used by frontend/binding builds.
@@ -353,7 +434,6 @@ jobs:
             android) wails3 task android:package ARCH=arm64 ;;
             windows) wails3 task windows:package ARCH=amd64 ;;
             macos) wails3 task darwin:package ARCH=arm64 ;;
-            ios) wails3 task ios:package IOS_PLATFORM=simulator ;;
             *) exit 1 ;;
           esac
       - name: pwsh - Sign and Verify Windows Installer
@@ -440,6 +520,26 @@ jobs:
             }
           }
           if (Test-Path -LiteralPath $directory) { Remove-Item -LiteralPath $directory -Recurse -Force }
+      - name: bash - Clean Up macOS Signing
+        if: ${{ always() && matrix.platform == 'macos' }}
+        run: |
+          set -euo pipefail
+          directory="$RUNNER_TEMP/snoo-box-macos-signing"
+          trap 'rm -rf -- "$directory"' EXIT
+          python3 - "$directory" <<'PY'
+          import json, pathlib, subprocess, sys
+          directory = pathlib.Path(sys.argv[1])
+          state_file = directory / "keychains.json"
+          failed = False
+          if state_file.exists():
+              state = json.loads(state_file.read_text())
+              for name, command in [("default", "default-keychain"), ("search", "list-keychains")]:
+                  failed |= subprocess.run(["security", command, "-d", "user", "-s", *state[name]]).returncode != 0
+          keychain = directory / "signing.keychain-db"
+          if keychain.exists():
+              failed |= subprocess.run(["security", "delete-keychain", str(keychain)]).returncode != 0
+          sys.exit(int(failed))
+          PY
       - name: bash - Stage Release Packages
         working-directory: source/app
         shell: bash
@@ -472,10 +572,6 @@ jobs:
               test -d bin/snoo-box.app
               ditto -c -k --sequesterRsrc --keepParent bin/snoo-box.app "dist/$prefix-arm64-macOS.zip"
               ;;
-            ios)
-              test -d bin/snoo-box.app
-              ditto -c -k --sequesterRsrc --keepParent bin/snoo-box.app "dist/$prefix-arm64-iOS_Simulator.zip"
-              ;;
             *) exit 1 ;;
           esac
       - name: actions/upload-artifact@v7 - Upload Release Packages
@@ -487,8 +583,8 @@ jobs:
           retention-days: 1
 
   release:
-    needs: [prepare, build]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'failure') }}
+    needs: [prepare, ios-tests, build]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.ios-tests.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'failure') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
