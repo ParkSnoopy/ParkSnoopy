@@ -1,5 +1,9 @@
 name: Snoo Box
 
+defaults:
+  run:
+    shell: bash
+
 on:
   workflow_dispatch:
   workflow_call:
@@ -18,6 +22,7 @@ env:
 
 jobs:
   prepare:
+    name: Prepare Source
     runs-on: ubuntu-latest
     outputs:
       revision: ${{ steps.source.outputs.revision }}
@@ -50,10 +55,14 @@ jobs:
             echo 'The source revision lacks Android shared-library link compatibility; publish the snoo-box Android build fix before dispatching this workflow.' >&2
             exit 1
           fi
+          for script in darwin/ci-import.bash darwin/ci-cleanup.bash android/ci-setup.bash windows/ci-sign.ps1 windows/ci-cleanup.ps1 ci-package.bash ci-stage.bash; do
+            test -s "source/app/build/$script" || { echo "Publish the source CI scripts before running this workflow: $script" >&2; exit 1; }
+          done
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
   linux-engines:
+    name: Build Linux Engines
     needs: prepare
     runs-on: ubuntu-latest
     env:
@@ -180,6 +189,7 @@ jobs:
           retention-days: 1
 
   ios-tests:
+    name: Test iOS Engines
     needs: prepare
     runs-on: macos-latest
     env:
@@ -205,6 +215,7 @@ jobs:
         run: go test -tags with_gvisor -ldflags=-checklinkname=0 ./...
 
   build:
+    name: Build ${{ matrix.title }}
     needs: [prepare, linux-engines]
     environment: snoo-box
     env:
@@ -214,10 +225,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {platform: linux, os: ubuntu-latest}
-          - {platform: android, os: ubuntu-latest}
-          - {platform: windows, os: windows-latest}
-          - {platform: macos, os: macos-latest}
+          - {platform: linux, title: Linux, os: ubuntu-latest}
+          - {platform: android, title: Android, os: ubuntu-latest}
+          - {platform: windows, title: Windows, os: windows-latest}
+          - {platform: macos, title: macOS, os: macos-latest}
     runs-on: ${{ matrix.os }}
     steps:
       - name: actions/checkout@v7 - Check Out Pinned Source
@@ -246,53 +257,7 @@ jobs:
           APPLE_SIGN_IDENTITY: ${{ secrets.APPLE_SIGN_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-        run: |
-          set -euo pipefail
-          : "${APPLE_CERTIFICATE_P12_BASE64:?Set APPLE_CERTIFICATE_P12_BASE64 in snoo-box}"
-          : "${APPLE_CERTIFICATE_PASSWORD:?Set APPLE_CERTIFICATE_PASSWORD in snoo-box}"
-          : "${APPLE_APP_PROFILE_BASE64:?Set APPLE_APP_PROFILE_BASE64 in snoo-box}"
-          : "${APPLE_TUNNEL_PROFILE_BASE64:?Set APPLE_TUNNEL_PROFILE_BASE64 in snoo-box}"
-          : "${APPLE_TEAM_ID:?Set APPLE_TEAM_ID in snoo-box}"
-          : "${APPLE_SIGN_IDENTITY:?Set APPLE_SIGN_IDENTITY in snoo-box}"
-          : "${APPLE_ID:?Set APPLE_ID in snoo-box}"
-          : "${APPLE_APP_SPECIFIC_PASSWORD:?Set APPLE_APP_SPECIFIC_PASSWORD in snoo-box}"
-          [[ "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]]
-          [[ "$APPLE_SIGN_IDENTITY" == 'Developer ID Application: '* ]]
-          [[ "$APPLE_SIGN_IDENTITY" != *$'\n'* && "$APPLE_SIGN_IDENTITY" != *$'\r'* ]]
-          umask 077
-          directory="$RUNNER_TEMP/snoo-box-macos-signing"
-          mkdir "$directory"
-          printf '%s' "$APPLE_CERTIFICATE_P12_BASE64" | base64 --decode > "$directory/certificate.p12"
-          printf '%s' "$APPLE_APP_PROFILE_BASE64" | base64 --decode > "$directory/app.provisionprofile"
-          printf '%s' "$APPLE_TUNNEL_PROFILE_BASE64" | base64 --decode > "$directory/tunnel.provisionprofile"
-          python3 - "$directory/keychains.json" <<'PY'
-          import json, shlex, subprocess, sys
-          state = {name: shlex.split(subprocess.check_output(["security", command, "-d", "user"], text=True))
-                   for name, command in [("default", "default-keychain"), ("search", "list-keychains")]}
-          with open(sys.argv[1], "w") as output:
-              json.dump(state, output)
-          PY
-          keychain="$directory/signing.keychain-db"
-          password="$(openssl rand -hex 32)"
-          echo "::add-mask::$password"
-          security create-keychain -p "$password" "$keychain"
-          security set-keychain-settings -lut 21600 "$keychain"
-          security unlock-keychain -p "$password" "$keychain"
-          security import "$directory/certificate.p12" -P "$APPLE_CERTIFICATE_PASSWORD" -t cert -f pkcs12 -k "$keychain" -T /usr/bin/codesign -T /usr/bin/security
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
-          security find-identity -v -p codesigning "$keychain" | grep -F -- "\"$APPLE_SIGN_IDENTITY\"" >/dev/null
-          security list-keychains -d user -s "$keychain" /Library/Keychains/System.keychain
-          security default-keychain -d user -s "$keychain"
-          xcrun notarytool store-credentials snoo-box-ci --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --keychain "$keychain" >/dev/null
-          rm -f "$directory/certificate.p12"
-          {
-            echo "APPLE_TEAM_ID=$APPLE_TEAM_ID"
-            echo "APPLE_SIGN_IDENTITY=$APPLE_SIGN_IDENTITY"
-            echo "APPLE_APP_PROFILE=$directory/app.provisionprofile"
-            echo "APPLE_TUNNEL_PROFILE=$directory/tunnel.provisionprofile"
-            echo 'APPLE_NOTARY_PROFILE=snoo-box-ci'
-            echo "APPLE_NOTARY_KEYCHAIN=$keychain"
-          } >> "$GITHUB_ENV"
+        run: bash source/app/build/darwin/ci-import.bash
       - name: actions/download-artifact@v8 - Download Linux Engine Payloads
         uses: actions/download-artifact@v8
         with:
@@ -333,26 +298,7 @@ jobs:
           STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          : "${KEY:?Set ANDROID_KEYSTORE_BASE64 for snoo-box}"
-          : "${STORE_PASSWORD:?Set ANDROID_KEYSTORE_PASSWORD for snoo-box}"
-          : "${KEY_ALIAS:?Set ANDROID_KEY_ALIAS for snoo-box}"
-          : "${KEY_PASSWORD:?Set ANDROID_KEY_PASSWORD for snoo-box}"
-          available="$(sdkmanager --list --channel=0)"
-          ndk="$(printf '%s\n' "$available" | python3 -c 'import re,sys; versions=set(re.findall(r"^\s*ndk;([0-9]+(?:\.[0-9]+)+)\s*\|",sys.stdin.read(),re.M)); print(max(versions,key=lambda v:tuple(map(int,v.split(".")))))')"
-          tools="$(printf '%s\n' "$available" | python3 -c 'import re,sys; versions=set(re.findall(r"^\s*build-tools;([0-9]+(?:\.[0-9]+)+)\s*\|",sys.stdin.read(),re.M)); print(max(versions,key=lambda v:tuple(map(int,v.split(".")))))')"
-          sdkmanager "ndk;$ndk" 'platforms;android-35' "build-tools;$tools"
-          {
-            echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ndk"
-            echo "ANDROID_BUILD_TOOLS=$ANDROID_HOME/build-tools/$tools"
-            echo "ANDROID_KEYSTORE_PASSWORD=$STORE_PASSWORD"
-            echo "ANDROID_KEY_ALIAS=$KEY_ALIAS"
-            echo "ANDROID_KEY_PASSWORD=$KEY_PASSWORD"
-          } >> "$GITHUB_ENV"
-          echo "$KEY" | base64 --decode > "$RUNNER_TEMP/snoo-box.jks"
-          keytool -list -keystore "$RUNNER_TEMP/snoo-box.jks" -storepass "$STORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
-          echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/snoo-box.jks" >> "$GITHUB_ENV"
+        run: bash source/app/build/android/ci-setup.bash
       - name: pwsh - Install NSIS
         if: matrix.platform == 'windows'
         shell: pwsh
@@ -424,19 +370,7 @@ jobs:
         shell: bash
         env:
           PLATFORM: ${{ matrix.platform }}
-        run: |
-          set -euo pipefail
-          case "$PLATFORM" in
-            linux)
-              # Build only the portable bundle, not DEB/RPM/Arch packages.
-              wails3 task linux:create:bundle
-              wails3 task cli:package
-              ;;
-            android) wails3 task android:package ARCH=arm64 ;;
-            windows) wails3 task windows:package ARCH=amd64 ;;
-            macos) wails3 task darwin:package ARCH=arm64 ;;
-            *) exit 1 ;;
-          esac
+        run: bash build/ci-package.bash
       - name: pwsh - Sign and Verify Windows Installer
         if: matrix.platform == 'windows'
         shell: pwsh
@@ -444,137 +378,22 @@ jobs:
         env:
           WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
           WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PFX_PASSWORD }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $directory = Join-Path $env:RUNNER_TEMP 'snoo-box-windows-signing'
-          $null = New-Item -ItemType Directory -Path $directory
-          $pfx = Join-Path $directory 'signing.pfx'
-          $added = @()
-          try {
-            Write-Host 'Loading and validating the signing certificate.'
-            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CODESIGN_PFX_BASE64))
-            $password = ConvertTo-SecureString $env:WINDOWS_CODESIGN_PFX_PASSWORD -AsPlainText -Force
-            $certificate = Get-PfxData -FilePath $pfx -Password $password
-            $leaf = @($certificate.EndEntityCertificates)
-            if ($leaf.Count -ne 1) { throw 'Expected exactly one signing certificate.' }
-            $leaf = $leaf[0]
-            if ($leaf.NotBefore -gt (Get-Date) -or $leaf.NotAfter -le (Get-Date)) {
-              throw 'Signing certificate is not currently valid.'
-            }
-            # Read the X.509 EKU extension, not PowerShell's display-oriented adapter.
-            $eku = $leaf.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.37' }
-            if (!$eku -or '1.3.6.1.5.5.7.3.3' -notin @(
-                ([Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension]::new(
-                  $eku, $eku.Critical)).EnhancedKeyUsages.Value)) {
-              throw 'Certificate does not permit code signing.'
-            }
-            $thumbprint = $leaf.Thumbprint
-            # Approved temporary public-certificate trust on this disposable runner.
-            # CurrentUser\Root can display a hidden confirmation dialog in CI.
-            Write-Host 'Installing temporary machine trust for the supplied public certificate.'
-            foreach ($storeName in @('Root', 'TrustedPeople')) {
-              $store = [Security.Cryptography.X509Certificates.X509Store]::new($storeName, 'LocalMachine')
-              try {
-                $store.Open('ReadWrite')
-                if ($store.Certificates.Find('FindByThumbprint', $thumbprint, $false).Count -eq 0) {
-                  $added += "Cert:\LocalMachine\$storeName\$thumbprint"
-                  # Record ownership before mutation so cancellation cleanup can recover.
-                  ConvertTo-Json -InputObject $added | Set-Content -LiteralPath (Join-Path $directory 'added.json')
-                  $store.Add($leaf)
-                }
-              } finally { $store.Close() }
-            }
-            $installer = (Resolve-Path 'source/app/bin/snoo-box-amd64-installer.exe').Path
-            Write-Host 'Signing the installer and requesting a SHA-256 timestamp.'
-            & $env:WINDOWS_SIGNTOOL sign /f $pfx /p $env:WINDOWS_CODESIGN_PFX_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $installer
-            if ($LASTEXITCODE -ne 0) { throw "Installer signing failed: $LASTEXITCODE" }
-            Write-Host 'Verifying installer integrity, signer identity, and timestamp.'
-            & $env:WINDOWS_SIGNTOOL verify /pa /all /v $installer
-            if ($LASTEXITCODE -ne 0) { throw "Installer signature verification failed: $LASTEXITCODE" }
-            $signature = Get-AuthenticodeSignature -LiteralPath $installer
-            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne $thumbprint -or
-                !$signature.TimeStamperCertificate) {
-              throw 'Installer must have a valid signature from the supplied certificate and a timestamp.'
-            }
-            Write-Host 'Installer signature and timestamp verified.'
-          } finally {
-            Write-Host 'Removing temporary signing material and certificate trust.'
-            foreach ($entry in $added) {
-              if (Test-Path -LiteralPath $entry) { Remove-Item -LiteralPath $entry -Force }
-            }
-            Remove-Item -LiteralPath $directory -Recurse -Force
-          }
+        run: ./source/app/build/windows/ci-sign.ps1
       - name: pwsh - Clean Up Interrupted Windows Signing
         if: ${{ always() && matrix.platform == 'windows' }}
         shell: pwsh
         timeout-minutes: 1
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $directory = Join-Path $env:RUNNER_TEMP 'snoo-box-windows-signing'
-          $record = Join-Path $directory 'added.json'
-          if (Test-Path -LiteralPath $record) {
-            foreach ($entry in @(Get-Content -LiteralPath $record -Raw | ConvertFrom-Json)) {
-              if ($entry -notmatch '^Cert:\\LocalMachine\\(Root|TrustedPeople)\\[0-9A-F]{40}$') {
-                throw 'Invalid temporary certificate cleanup record.'
-              }
-              if (Test-Path -LiteralPath $entry) { Remove-Item -LiteralPath $entry -Force }
-            }
-          }
-          if (Test-Path -LiteralPath $directory) { Remove-Item -LiteralPath $directory -Recurse -Force }
+        run: ./source/app/build/windows/ci-cleanup.ps1
       - name: bash - Clean Up macOS Signing
         if: ${{ always() && matrix.platform == 'macos' }}
-        run: |
-          set -euo pipefail
-          directory="$RUNNER_TEMP/snoo-box-macos-signing"
-          trap 'rm -rf -- "$directory"' EXIT
-          python3 - "$directory" <<'PY'
-          import json, pathlib, subprocess, sys
-          directory = pathlib.Path(sys.argv[1])
-          state_file = directory / "keychains.json"
-          failed = False
-          if state_file.exists():
-              state = json.loads(state_file.read_text())
-              for name, command in [("default", "default-keychain"), ("search", "list-keychains")]:
-                  failed |= subprocess.run(["security", command, "-d", "user", "-s", *state[name]]).returncode != 0
-          keychain = directory / "signing.keychain-db"
-          if keychain.exists():
-              failed |= subprocess.run(["security", "delete-keychain", str(keychain)]).returncode != 0
-          sys.exit(int(failed))
-          PY
+        run: bash source/app/build/darwin/ci-cleanup.bash
       - name: bash - Stage Release Packages
         working-directory: source/app
         shell: bash
         env:
           PLATFORM: ${{ matrix.platform }}
           VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          set -euo pipefail
-          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          prefix="Snoo_Box_v$VERSION"
-          mkdir -p dist
-          case "$PLATFORM" in
-            linux)
-              test -s bin/snoo-box-linux-amd64.tar.gz
-              tar -tzf bin/snoo-box-linux-amd64.tar.gz | grep -x 'snoo-box-linux-amd64/snoo-box' > /dev/null
-              test -s bin/snoo-box-cli-linux-amd64.zip
-              cp bin/snoo-box-linux-amd64.tar.gz "dist/$prefix-amd64-Linux.tar.gz"
-              cp bin/snoo-box-cli-linux-amd64.zip "dist/$prefix-amd64-Linux_CLI.zip"
-              ;;
-            android)
-              test -s bin/snoo-box.apk
-              "$ANDROID_BUILD_TOOLS/apksigner" verify --min-sdk-version 21 --verbose bin/snoo-box.apk
-              cp bin/snoo-box.apk "dist/$prefix-arm64-Android.apk"
-              ;;
-            windows)
-              test -s bin/snoo-box-amd64-installer.exe
-              cp bin/snoo-box-amd64-installer.exe "dist/$prefix-amd64-Windows.exe"
-              ;;
-            macos)
-              test -d bin/snoo-box.app
-              ditto -c -k --sequesterRsrc --keepParent bin/snoo-box.app "dist/$prefix-arm64-macOS.zip"
-              ;;
-            *) exit 1 ;;
-          esac
+        run: bash build/ci-stage.bash
       - name: actions/upload-artifact@v7 - Upload Release Packages
         uses: actions/upload-artifact@v7
         with:
@@ -584,6 +403,7 @@ jobs:
           retention-days: 1
 
   release:
+    name: Publish Release
     needs: [prepare, ios-tests, build]
     if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.ios-tests.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'failure') }}
     runs-on: ubuntu-latest
