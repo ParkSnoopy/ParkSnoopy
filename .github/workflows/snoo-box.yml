@@ -291,6 +291,7 @@ jobs:
             echo "APPLE_APP_PROFILE=$directory/app.provisionprofile"
             echo "APPLE_TUNNEL_PROFILE=$directory/tunnel.provisionprofile"
             echo 'APPLE_NOTARY_PROFILE=snoo-box-ci'
+            echo "APPLE_NOTARY_KEYCHAIN=$keychain"
           } >> "$GITHUB_ENV"
       - name: actions/download-artifact@v8 - Download Linux Engine Payloads
         uses: actions/download-artifact@v8
