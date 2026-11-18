@@ -288,14 +288,23 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: bash source/app/build/android/ci-setup.bash
-      - name: pwsh - Install NSIS
+      - name: pwsh - Set Up NSIS
         if: matrix.platform == 'windows'
         shell: pwsh
+        timeout-minutes: 5
         run: |
           $ErrorActionPreference = 'Stop'
-          choco install nsis --yes --no-progress
-          if ($LASTEXITCODE -ne 0) { throw "NSIS installation failed with exit code $LASTEXITCODE" }
-          $nsisDirectory = Join-Path ${env:ProgramFiles(x86)} 'NSIS'
+          $nsisVersion = '3.13'
+          $nsisSha256 = 'ba63dffc4410ee89193e1cb5a41989991bd77c61068da17e3156d136b7b0b3d8'
+          $nsisDirectory = Join-Path $env:RUNNER_TEMP "nsis-$nsisVersion"
+          $archive = "$nsisDirectory.zip"
+          $url = "https://downloads.sourceforge.net/project/nsis/NSIS%203/$nsisVersion/nsis-$nsisVersion.zip"
+          curl.exe -fsSL --retry 3 --max-time 60 --proto-redir '=https' -o $archive $url
+          if ($LASTEXITCODE -ne 0) { throw "NSIS download failed with exit code $LASTEXITCODE" }
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $nsisSha256) {
+            throw "NSIS $nsisVersion archive checksum mismatch"
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $env:RUNNER_TEMP
           if (!(Test-Path -LiteralPath (Join-Path $nsisDirectory 'makensis.exe') -PathType Leaf)) {
             throw "NSIS compiler not found in $nsisDirectory"
           }
