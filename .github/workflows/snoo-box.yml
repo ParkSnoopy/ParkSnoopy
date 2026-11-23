@@ -45,8 +45,8 @@ jobs:
             echo 'The source revision lacks shared Linux payload support; publish the snoo-box build-graph fix before dispatching this workflow.' >&2
             exit 1
           fi
-          if ! grep -Fq 'verify:overlay-hub:' source/app/build/Taskfile.yml; then
-            echo 'The source revision lacks shared overlay hub support; publish the snoo-box build-graph fix before dispatching this workflow.' >&2
+          if ! test -s source/engines/build-overlay-hub.bash || ! grep -Fq 'verify:overlay-hub:' source/app/build/Taskfile.yml; then
+            echo 'Publish the Snoo Box revision that builds and verifies the Go overlay hub before running this workflow.' >&2
             exit 1
           fi
           if [[ "$(grep -Fc -- '-ldflags="-checklinkname=0 {{.REVISION_LDFLAGS}}' source/app/build/android/Taskfile.yml)" != 2 ]]; then
@@ -159,8 +159,6 @@ jobs:
       - name: bash - Build Linux Engines
         working-directory: source/app
         shell: bash
-        env:
-          RUSTUP_TOOLCHAIN: stable
         run: |
           set -euo pipefail
           wails3 task native:verify
@@ -171,8 +169,6 @@ jobs:
           done
       - name: bash - Build and Record Linux Payloads
         working-directory: source/app
-        env:
-          RUSTUP_TOOLCHAIN: stable
         run: |
           set -euo pipefail
           wails3 task common:build:overlay-hub
@@ -234,7 +230,6 @@ jobs:
           xcrun --sdk iphoneos --show-sdk-version
           go version
           bun --version
-          cargo --version
       - name: bash - Import macOS Signing Secrets
         if: matrix.platform == 'macos'
         env:
