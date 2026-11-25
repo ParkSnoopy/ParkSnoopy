@@ -73,12 +73,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {platform: android, os: ubuntu-24.04}
-          - {platform: linux, os: ubuntu-24.04}
-          - {platform: windows, os: windows-2022}
-          - {platform: macos, os: macos-15}
-          - {platform: ios, os: macos-15}
-          - {platform: ios-simulator, os: macos-15}
+          - {platform: android, os: ubuntu-latest}
+          - {platform: linux, os: ubuntu-latest}
+          - {platform: windows, os: windows-latest}
+          - {platform: macos, os: macos-latest}
     runs-on: ${{ matrix.os }}
     steps:
       - name: actions/checkout@v7 - Check Out Workflow Actions
